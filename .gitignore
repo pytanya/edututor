@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+coverage/
+htmlcov/
+build/
+dist/
+*.log
+logs/
+
+# Node.js
+node_modules/
+frontend/dist/
+
+# Testing
+test-results/
+playwright-report/
+
+# Environment & local config
+.env
+
+# SQLite databases
+*.db
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Посторонний экспортный артефакт (не относится к проекту)
+Qwen_text_*.txt

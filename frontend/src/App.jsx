@@ -1,0 +1,276 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import api from './api'
+import {
+  getStudentId, getSessionId, setSessionId, clearSession,
+  loadStudentRecord, saveStudentRecord, resolveStudentId,
+} from './identity'
+import Chat, { feedReducer } from './components/Chat'
+import AdaptivePanel from './components/AdaptivePanel'
+import KnowledgeWikiPanel from './components/KnowledgeWikiPanel'
+import StudentKGPanel from './components/StudentKGPanel'
+import KnowledgeGraphPanel from './components/KnowledgeGraphPanel'
+import TopicForm from './components/TopicForm'
+import IntakeCard from './components/IntakeCard'
+import SessionList from './components/SessionList'
+
+const EMPTY_GRAPH = { nodes: [], edges: [], activeTopic: null }
+
+function profileToCard(rec) {
+  return {
+    fields: [
+      { key: 'name', value: rec?.student_name || '' },
+      { key: 'learner_type', value: rec?.learner_type || '' },
+      { key: 'grade', value: rec?.grade || '' },
+    ],
+  }
+}
+
+export default function App() {
+  const [feed, setFeed] = useState({ items: [], lastStep: null, adaptive: null, error: null })
+  const [busy, setBusy] = useState(false)
+  const [sessions, setSessions] = useState([])
+  const [current, setCurrent] = useState(null) // {session_id, topic, subject, grade}
+  const [graph, setGraph] = useState(EMPTY_GRAPH)
+  const [kgReloadKey, setKgReloadKey] = useState(0)
+  const [wikiVersion, setWikiVersion] = useState(0)
+  const studentIdRef = useRef(getStudentId())
+  const [studentId, setStudentIdState] = useState(studentIdRef.current)
+  const applyStudentId = useCallback((id) => {
+    studentIdRef.current = id
+    setStudentIdState(id)
+  }, [])
+  const [profile, setProfile] = useState(() => loadStudentRecord())
+  const [intakeSkipped, setIntakeSkipped] = useState(false)
+  const intakeRequired = !profile?.student_name && !intakeSkipped
+  const abortRef = useRef(null)
+
+  const refreshStudent = useCallback(async () => {
+    try {
+      const data = await api.student(studentIdRef.current)
+      setFeed((f) => ({ ...f, adaptive: { ...f.adaptive, student_id: data.student_id, recommended_next: data.recommended_next } }))
+    } catch {
+      /* студент ещё не создан — ок */
+    }
+  }, [])
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const data = await api.studentSessions(studentIdRef.current)
+      const list = (data.sessions || []).map((s) => ({
+        session_id: s.session_id,
+        topic: s.topic || '',
+        subject: '',
+        grade: '',
+      }))
+      setSessions(list)
+      if (list.length > 0) {
+        const sid = data.student_id || studentIdRef.current
+        setFeed((f) => ({ ...f, adaptive: { ...f.adaptive, student_id: sid } }))
+      }
+    } catch {
+      /* бэкенд недоступен / студент неизвестен — список остаётся пустым */
+    }
+  }, [])
+
+  const loadHistory = useCallback(async (session) => {
+    try {
+      const data = await api.history(session.session_id)
+      const items = (data.messages || []).map((m, i) => {
+        if (m.role === 'user') return { id: `h${i}`, kind: 'user', content: m.content }
+        return { id: `h${i}`, kind: 'agent', envelope: m.envelope || null, content: m.content }
+      })
+      setFeed({ items, lastStep: null, adaptive: session.adaptive || null, error: null })
+      setCurrent(session)
+      setSessionId(session.session_id)
+    } catch {
+      clearSession()
+      setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+      setCurrent({ ...session, session_id: '', topic: session.topic })
+    }
+  }, [])
+
+  const reloadKg = useCallback(() => setKgReloadKey((k) => k + 1), [])
+  const loadWiki = useCallback(() => setWikiVersion((v) => v + 1), [])
+
+  const refreshGraph = useCallback(async ({ subject, grade, topic } = {}) => {
+    const subj = subject ?? current?.subject ?? ''
+    const grd = grade ?? current?.grade ?? ''
+    if (!subj && !grd) {
+      setGraph(EMPTY_GRAPH)
+      return
+    }
+    try {
+      const d = await api.getGraph(studentIdRef.current, subj, grd)
+      setGraph({
+        nodes: d?.nodes || [],
+        edges: d?.edges || [],
+        activeTopic: topic ?? current?.topic ?? null,
+      })
+    } catch {
+      /* граф недоступен — «Созвездие» остаётся пустой */
+    }
+  }, [current])
+
+  const runTurn = useCallback(async (message, kind, meta = {}) => {
+    setBusy(true)
+    setFeed((f) => ({ ...f, error: null, items: message ? [...f.items, { id: `u${Date.now()}`, kind: 'user', content: message }] : f.items }))
+    const sessionId = meta.session_id !== undefined ? meta.session_id : current?.session_id || getSessionId()
+    const body = {
+      message,
+      kind: kind || 'message',
+      session_id: sessionId,
+      student_id: studentIdRef.current,
+      topic: meta.topic || current?.topic || '',
+      subject: meta.subject || current?.subject || '',
+      grade: meta.grade || current?.grade || '',
+    }
+    abortRef.current = api.chatStream(body, (ev) => {
+      if (ev.event === 'message') {
+        setFeed((f) => feedReducer(f, ev))
+        setCurrent((c) => ({ ...c, session_id: ev.data.session_id || c?.session_id }))
+        if (ev.data.session_id) setSessionId(ev.data.session_id)
+      } else if (ev.event === 'done') {
+        setBusy(false)
+        refreshStudent()
+        loadSessions()
+        reloadKg()
+        loadWiki()
+        refreshGraph({ subject: body.subject, grade: body.grade, topic: body.topic })
+      } else if (ev.event === 'graph.ready') {
+        setFeed((f) => feedReducer(f, ev))
+        refreshGraph({ subject: body.subject, grade: body.grade, topic: body.topic })
+        reloadKg()
+      } else {
+        setFeed((f) => feedReducer(f, ev))
+      }
+    })
+  }, [current, refreshStudent, loadSessions, reloadKg, loadWiki, refreshGraph])
+
+  const startTopic = useCallback((meta) => {
+    clearSession()
+    const session = { session_id: '', topic: meta.topic, subject: meta.subject, grade: meta.grade }
+    setCurrent(session)
+    setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+    runTurn(`Изучаем тему: ${meta.topic}. Объясни её и предложи задание.`, 'message', { ...meta, session_id: '' })
+  }, [runTurn])
+
+  const studyNext = useCallback((topic) => {
+    clearSession()
+    const session = { session_id: '', topic, subject: current?.subject || '', grade: current?.grade || '' }
+    setCurrent(session)
+    setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+    runTurn(`Расскажи про ${topic}`, 'message', { topic, subject: session.subject, grade: session.grade, session_id: '' })
+  }, [runTurn, current])
+
+  const startReview = useCallback(() => {
+    runTurn('', 'review_request')
+  }, [runTurn])
+
+  const handleIntake = useCallback((values) => {
+    const name = String(values.name || '').trim()
+    const type = String(values.learner_type || '')
+    const grade = String(values.grade || '').trim()
+    const stored = loadStudentRecord()
+    const { studentId: sid, identity, legacy } = resolveStudentId(
+      name, type, grade, stored, profileToCard(profile),
+    )
+    const record = {
+      student_id: sid,
+      student_name: name,
+      learner_type: type,
+      grade,
+      identity,
+      legacy: legacy === true,
+    }
+    saveStudentRecord(record)
+    setProfile(record)
+    applyStudentId(sid)
+    clearSession()
+    api.profile(sid, { name, learner_type: type, grade }).catch(() => {
+      /* fail-soft: серверная запись повторится при следующем запуске */
+    })
+    startTopic({ subject: String(values.subject || '').trim(), grade, topic: String(values.topic || '').trim() })
+  }, [profile, startTopic, applyStudentId])
+
+  const skipIntake = useCallback(() => {
+    setIntakeSkipped(true)
+  }, [])
+
+  useEffect(() => {
+    const rec = loadStudentRecord()
+    if (rec?.student_name && rec?.student_id) {
+      api.profile(rec.student_id, {
+        name: rec.student_name,
+        learner_type: rec.learner_type || '',
+        grade: rec.grade || '',
+      }).catch(() => { /* fail-soft: повторим при следующем запуске */ })
+    }
+  }, [])
+
+  useEffect(() => {
+    loadSessions()
+  }, [loadSessions])
+
+  useEffect(() => () => abortRef.current?.(), [])
+
+  return (
+    <div className="layout">
+      <div className="left">
+        {intakeRequired ? (
+          <IntakeCard
+            prefill={{ name: profile?.student_name || '', learner_type: profile?.learner_type || '', grade: profile?.grade || '' }}
+            onSubmit={handleIntake}
+            onSkip={skipIntake}
+          />
+        ) : (
+          <TopicForm
+            onStart={startTopic}
+            prefill={{ grade: profile?.learner_type === 'schoolchild' ? profile?.grade || '' : '' }}
+          />
+        )}
+        <SessionList sessions={sessions} currentId={current?.session_id} onNew={() => {
+          clearSession()
+          setCurrent(null)
+          setGraph(EMPTY_GRAPH)
+          setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+          loadSessions()
+        }} onPick={loadHistory} />
+      </div>
+      <main className="center">
+        {(current?.subject || current?.grade || graph.nodes.length > 0) && (
+          <KnowledgeGraphPanel
+            nodes={graph.nodes}
+            edges={graph.edges}
+            activeTopic={graph.activeTopic}
+            onSelect={(node) => studyNext(node.title)}
+            sessionId={current?.session_id || ''}
+          />
+        )}
+        <Chat
+          feed={feed}
+          busy={busy}
+          onSendUser={(text, kind) => runTurn(text, kind)}
+          onDismissBanner={(id) => setFeed((f) => ({ ...f, items: f.items.filter((i) => i.id !== id) }))}
+          onGoTopic={(gap) => studyNext(gap)}
+        />
+      </main>
+      <aside className="right">
+        <AdaptivePanel adaptive={feed.adaptive} onStudy={studyNext} busy={busy} />
+        <KnowledgeWikiPanel
+          studentId={studentId}
+          refreshKey={wikiVersion}
+          subject={current?.subject || ''}
+          grade={current?.grade || ''}
+        />
+        <StudentKGPanel
+          studentId={studentId}
+          subject={current?.subject || ''}
+          onStartReview={startReview}
+          busy={busy}
+          reloadKey={kgReloadKey}
+          onStudy={studyNext}
+        />
+      </aside>
+    </div>
+  )
+}
