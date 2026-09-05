@@ -12,6 +12,7 @@ function Inline({ tokens }) {
     if (tok.type === 'strong') return <strong key={i}>{renderPlain(tok.content)}</strong>
     if (tok.type === 'code') return <code key={i}>{tok.content}</code>
     if (tok.type === 'link') return <a key={i} href={tok.href} target="_blank" rel="noopener noreferrer">{tok.content}</a>
+    if (tok.type === 'br') return <br key={i} />
     return <span key={i} dangerouslySetInnerHTML={{ __html: escapeHtml(tok.content) }} />
   })
 }
@@ -19,6 +20,12 @@ function Inline({ tokens }) {
 function renderPlain(text) {
   // Вложенные токены внутри strong рендерим повторным парсингом (без рекурсии в HTML).
   return <Inline tokens={parseInline(text)} />
+}
+
+// InlineText — рендер одного фрагмента (вариант квиза, строка) без block-обёрток:
+// поддерживает $...$ / $$...$$, **жирный**, `код` и ссылки.
+export function InlineText({ text }) {
+  return <span className="inline-text"><Inline tokens={parseInline(text)} /></span>
 }
 
 export default function Latex({ text }) {

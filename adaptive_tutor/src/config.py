@@ -73,6 +73,11 @@ class Settings(BaseSettings):
         default=True,
         description="Пустой ответ (без tool_calls) считать ошибкой и пробовать следующий кандидат",
     )
+    llm_max_tokens: int = Field(
+        default=4096,
+        ge=256,
+        description="Макс. токенов ответа planner (уроки/JSON-конверты могут быть длинными)",
+    )
     # Ролевые модели (переопределяют региональные дефолты get_models_for_region)
     llm_planner_model: str = Field(
         default="", description="Модель planner (пусто — дефолт региона)"

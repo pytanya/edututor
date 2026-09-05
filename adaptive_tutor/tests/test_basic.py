@@ -47,13 +47,13 @@ def test_factory_creates_routerai_primary_for_ru(fake_keys):
 
 
 def test_runtime_models_region_defaults_use_instruct_planner(fake_keys):
-    """Основная модель RU — instruct deepseek-chat (не reasoning r1)."""
+    """Основная модель RU — qwen3.7-flash (как в референсе, instruct)."""
     ru = LLMClientFactory.get_models_for_region(Region.RU)
-    assert ru["planner"] == "deepseek/deepseek-chat"
+    assert ru["planner"] == "qwen/qwen3.7-flash"
     assert ru["judge"] == "google/gemini-2.5-flash"
-    # r1 остаётся доступен как фолбек-кандидат
+    # deepseek-chat остаётся доступен как фолбек-кандидат (instruct)
     ru_fb = LLMClientFactory.get_fallback_models_for_region(Region.RU)["planner"]
-    assert "deepseek/deepseek-r1" in ru_fb
+    assert "deepseek/deepseek-chat" in ru_fb
 
 
 def test_search_router_has_fallback(fake_keys):

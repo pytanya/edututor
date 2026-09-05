@@ -9,9 +9,9 @@ from ..config import Region, settings
 # которые пробуются, если основная модель роли вернула пусто/недоступна.
 _REGION_FALLBACKS: dict[Region, dict[str, list[str]]] = {
     Region.RU: {
-        # Основной RU planner — deepseek-chat (instruct, без reasoning); если он
-        # недоступен/пуст — пробуем reasoning r1, а последней — лёгкую qwen.
-        "planner": ["deepseek/deepseek-r1", "qwen/qwen-2.5-7b-instruct"],
+        # Основной RU planner — qwen3.7-flash (как в референсе; instruct, без
+        # reasoning). Если он недоступен/пуст — deepseek-chat, последней — qwen-2.5.
+        "planner": ["deepseek/deepseek-chat", "qwen/qwen-2.5-7b-instruct"],
         "judge": ["deepseek/deepseek-chat"],
     },
     Region.GLOBAL: {
@@ -229,13 +229,16 @@ class LLMClientFactory:
     def get_models_for_region(cls, region: Region) -> dict[str, str]:
         """Возвращает доступные модели для региона.
 
-        Основная «разговорная» модель (planner) — НЕ reasoning-модель: как в
-        референсе project_work (TUTOR_MODEL — instruct), чтобы не получать пустые
-        ответы. Переопределяется через TUTOR_LLM_PLANNER_MODEL/_FAST/_JUDGE.
+        Основная «разговорная» модель (planner) для RU — qwen3.7-flash (как в
+        референсе project_work: instruct, без reasoning-пустых ответов); для
+        GLOBAL — claude-sonnet-4. deepseek-v4-flash-0731 можно включить через
+        TUTOR_LLM_PLANNER_MODEL, но это reasoning-модель: при тесном max_tokens
+        съедает бюджет на «размышления» и возвращает пустой content.
+        Переопределяется через TUTOR_LLM_PLANNER_MODEL/_FAST/_JUDGE.
         """
         if region == Region.RU:
             models = {
-                "planner": "deepseek/deepseek-chat",
+                "planner": "qwen/qwen3.7-flash",
                 "fast": "qwen/qwen-2.5-7b-instruct",
                 "judge": "google/gemini-2.5-flash",
             }

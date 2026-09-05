@@ -1,6 +1,11 @@
 """Тесты парсинга финального ответа в ContentEnvelope."""
 
-from src.agent.envelope import parse_content_envelope, parse_content_envelopes
+from src.agent.envelope import (
+    looks_like_truncated_envelope,
+    parse_content_envelope,
+    parse_content_envelopes,
+    salvage_truncated_envelope,
+)
 from src.agent.prompts import SYSTEM_PROMPT
 from src.models.schemas import ContentType
 
@@ -69,6 +74,101 @@ def test_plain_text_falls_back_to_theory():
     env = parse_content_envelope("Простое объяснение без JSON")
     assert env.type == ContentType.THEORY
     assert env.text == "Простое объяснение без JSON"
+
+
+def test_raw_newline_inside_json_string_is_repaired():
+    """Модель вставляет в ``"text"`` настоящий перевод строки — невалидный JSON.
+
+    Раньше конверт терялся, и ученик видел в чате сырой «словарь» с метаданными
+    вместо урока. Теперь управляющие символы внутри строк экранируются.
+    """
+    raw = (
+        '{"type": "theory", "text": "Сила тяжести — это сила.\\n\\n'
+        'Масса тела измеряется в кг.", "payload": {"topic": "Сила тяжести"}, '
+        '"difficulty": "medium"}'
+    ).replace("\\n\\n", "\n\n")
+    env = parse_content_envelope(raw)
+    assert env.type == ContentType.THEORY
+    assert env.text == "Сила тяжести — это сила.\n\nМасса тела измеряется в кг."
+    assert env.payload["topic"] == "Сила тяжести"
+
+
+def test_raw_newline_in_second_of_two_envelopes():
+    raw = (
+        '{"type": "theory", "text": "Объяснение.", '
+        '"payload": {"topic": "т"}, "difficulty": "easy"}\n\n'
+        '{"type": "practice", "text": "Задача\\nс условием в несколько строк.", '
+        '"payload": {"task_ref": "x"}, "difficulty": "medium"}'
+    ).replace("\\nс", "\nс")
+    envelopes = parse_content_envelopes(raw)
+    assert [e.type.value for e in envelopes] == ["theory", "practice"]
+    assert envelopes[1].text == "Задача\nс условием в несколько строк."
+
+
+def test_escaped_newline_inside_string_is_not_double_escaped():
+    raw = (
+        '{"type": "theory", "text": "Строка с \\\\n экранированием.", '
+        '"payload": {"topic": "т"}, "difficulty": "medium"}'
+    )
+    env = parse_content_envelope(raw)
+    assert env.type == ContentType.THEORY
+    assert env.text == "Строка с \\n экранированием."
+
+
+def test_raw_crlf_inside_json_string_is_repaired():
+    raw = (
+        '{"type": "theory", "text": "Строка один\\r\\nСтрока два", '
+        '"payload": {"topic": "т"}, "difficulty": "easy"}'
+    ).replace("\\r\\n", "\r\n")
+    env = parse_content_envelope(raw)
+    assert env.type == ContentType.THEORY
+    assert env.text == "Строка один\r\nСтрока два"
+
+
+def test_truncated_json_is_not_parsed_but_looks_like_envelope():
+    """Модель упёрлась в max_tokens посреди JSON — целого конверта нет."""
+    raw = (
+        '{"type": "theory", "text": "Рациональные числа — это числа. '
+        'Формула: $$F = m \\cdot g$$, а дальше текст обрывается на '
+    )
+    assert parse_content_envelopes(raw) == []
+    assert looks_like_truncated_envelope(raw) is True
+
+
+def test_salvage_truncated_theory_returns_clean_text():
+    raw = (
+        '{"type": "theory", "text": "Рациональные числа — это числа. '
+        'Формула: $$F = m \\cdot g$$. И начало незакрытой формулы: $$E = mc'
+    )
+    env = salvage_truncated_envelope(raw)
+    assert env is not None
+    assert env.type == ContentType.THEORY
+    assert env.text.startswith("Рациональные числа")
+    assert "$$E = mc" not in env.text  # хвост незакрытой формулы срезан
+    assert "type" not in env.text and "{""" not in env.text
+
+
+def test_salvage_keeps_topic_when_payload_was_written():
+    raw = (
+        '{"type": "theory", "text": "Полный урок про рациональные числа.", '
+        '"payload": {"topic": "Рациональные числа"}, "difficulty": "med'
+    )
+    env = salvage_truncated_envelope(raw)
+    assert env is not None
+    assert env.text == "Полный урок про рациональные числа."
+    assert env.payload.get("topic") == "Рациональные числа"
+    assert env.difficulty == "medium"  # оборванное difficulty -> дефолт
+
+
+def test_salvage_truncated_quiz_returns_none():
+    raw = '{"type": "quiz", "text": "Вопрос для ученика, который оборвался'
+    assert looks_like_truncated_envelope(raw) is True
+    assert salvage_truncated_envelope(raw) is None
+
+
+def test_salvage_ignores_plain_text():
+    assert salvage_truncated_envelope("Обычный текст без JSON") is None
+    assert looks_like_truncated_envelope("Обычный текст") is False
 
 
 def test_two_consecutive_json_objects_parse_to_two():

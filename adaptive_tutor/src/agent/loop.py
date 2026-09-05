@@ -30,7 +30,11 @@ from ..models.schemas import (
 from ..observability.logger import JsonlLogger, TraceContext
 from ..safety import IterationLimiter, OutputValidator
 from .critic import Critic
-from .envelope import parse_content_envelopes
+from .envelope import (
+    looks_like_truncated_envelope,
+    parse_content_envelopes,
+    salvage_truncated_envelope,
+)
 from .prompts import build_messages
 from .tools import TOOL_SCHEMAS, ToolContext, execute_tool
 
@@ -47,6 +51,13 @@ STATUS_STOP = "stop"
 _MAX_CONTEXT_SNIPPETS = 10  # максимум сниппетов RAG в rag_context
 _SNIPPET_CHARS = 600  # максимум символов одного сниппета
 _MAX_OBSERVATION_ITEMS = 8  # сколько позиций показывать модели в наблюдении
+
+# Если модель упёрлась в max_tokens посреди JSON-конверта (не quiz/practice) и
+# спасти theory не удалось — вежливый отказ вместо сырого «словаря» с метаданными.
+_TRUNCATED_FALLBACK_TEXT = (
+    "Извините, ответ получился слишком длинным и оборвался. "
+    "Сформулируйте вопрос короче или разбейте его на несколько сообщений."
+)
 
 
 class AgentRuntime:
@@ -132,7 +143,7 @@ class AgentRuntime:
                 model=model,
                 tools=TOOL_SCHEMAS,
                 temperature=0.4,
-                max_tokens=1024,
+                max_tokens=settings.llm_max_tokens,
             )
         except Exception as e:  # noqa: BLE001
             if self.circuit_breaker:
@@ -262,11 +273,19 @@ class AgentRuntime:
         """
         raw = state.final_answer or "Не смог сформировать ответ."
         all_envs = parse_content_envelopes(raw)
-        envelope = (
-            all_envs[0]
-            if all_envs
-            else ContentEnvelope(type=ContentType.THEORY, text=raw)
-        )
+        if all_envs:
+            envelope = all_envs[0]
+        else:
+            envelope = salvage_truncated_envelope(raw)
+            if envelope is None:
+                if looks_like_truncated_envelope(raw):
+                    # Ответ оборван на недописанном quiz/practice — сырой JSON
+                    # ученику не показываем, а отвечаем вежливым отказом.
+                    envelope = ContentEnvelope(
+                        type=ContentType.THEORY, text=_TRUNCATED_FALLBACK_TEXT
+                    )
+                else:
+                    envelope = ContentEnvelope(type=ContentType.THEORY, text=raw)
         answer = envelope.text
 
         # Страховка: модель «вызвала» инструмент текстом и не дошла до ответа

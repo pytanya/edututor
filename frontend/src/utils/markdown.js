@@ -1,9 +1,20 @@
 // markdown — минимальный парсер для ответов репетитора (без LaTeX-логики).
 const INLINE_RE = /(\$\$[^$]+?\$\$|\$[^$\n]+?\$)|(`[^`]+`)|(\*\*[^*]+\*\*)|(\[([^\]]+)\]\(([^)\s]+)\))/gs
 
+// Некоторые модели оформляют формулы как \(...\) / \[...\]. Рендерер ждёт
+// $...$ / $$...$$, поэтому делимитеры нормализуются до разбора. В replace
+// возвращаем функцию: '$$' в строке замены означает один доллар.
+export function normalizeLatexDelimiters(text) {
+  return String(text || '')
+    .replace(/\\\[/g, () => '$$')
+    .replace(/\\\]/g, () => '$$')
+    .replace(/\\\(/g, () => '$')
+    .replace(/\\\)/g, () => '$')
+}
+
 export function parseInline(text) {
   const tokens = []
-  const source = String(text || '')
+  const source = normalizeLatexDelimiters(text)
   let last = 0
   for (const m of source.matchAll(INLINE_RE)) {
     if (m.index > last) tokens.push({ type: 'text', content: source.slice(last, m.index) })
@@ -17,26 +28,66 @@ export function parseInline(text) {
   return tokens
 }
 
+function paragraphTokens(lines) {
+  // Строки абзаца соединяются мягким переносом <br/>, чтобы материал урока не
+  // «склеивался» в одну строку: HTML в <p> схлопывает обычные переводы строк.
+  const tokens = []
+  lines.forEach((line, i) => {
+    if (i > 0) tokens.push({ type: 'br' })
+    tokens.push(...parseInline(line))
+  })
+  return tokens
+}
+
 export function parseBlocks(text) {
   const blocks = []
-  for (const raw of String(text || '').split(/\n\s*\n/)) {
-    const block = raw.trim()
-    if (!block) continue
-    const heading = block.match(/^(#{1,4})\s+(.*)$/)
+  const paraLines = []
+  let list = null
+
+  const flushPara = () => {
+    if (paraLines.length > 0) {
+      blocks.push({ type: 'paragraph', text: paragraphTokens(paraLines) })
+      paraLines.length = 0
+    }
+  }
+  const flushList = () => {
+    if (list !== null) {
+      blocks.push({ type: 'list', items: list })
+      list = null
+    }
+  }
+  const flush = () => {
+    flushPara()
+    flushList()
+  }
+
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim()
+    if (!line) {
+      flush()
+      continue
+    }
+    const heading = line.match(/^(#{1,4})\s+(.*)$/)
     if (heading) {
+      flush()
       blocks.push({ type: 'heading', level: heading[1].length, text: parseInline(heading[2]) })
       continue
     }
-    if (block.startsWith('> ')) {
-      blocks.push({ type: 'quote', text: parseInline(block.slice(2)) })
+    const bullet = line.match(/^([-*+])\s+(.*)$/)
+    if (bullet) {
+      flushPara()
+      list = list || []
+      list.push(parseInline(bullet[2]))
       continue
     }
-    const listLines = block.split('\n').filter((l) => /^[-*] /.test(l.trim()))
-    if (listLines.length === block.split('\n').length && listLines.length > 0) {
-      blocks.push({ type: 'list', items: listLines.map((l) => parseInline(l.trim().slice(2))) })
+    flushList()
+    if (line.startsWith('> ')) {
+      flushPara()
+      blocks.push({ type: 'quote', text: parseInline(line.slice(2)) })
       continue
     }
-    blocks.push({ type: 'paragraph', text: parseInline(block) })
+    paraLines.push(line)
   }
+  flush()
   return blocks
 }

@@ -99,3 +99,33 @@ async def test_plain_text_falls_back_to_theory_in_finalize():
     assert result.content_envelope is not None
     assert result.content_envelope.type == ContentType.THEORY
     assert result.content_envelope.text == "Обычный текст без JSON"
+
+
+@pytest.mark.asyncio
+async def test_finalize_salvages_truncated_theory_envelope():
+    """Обрыв на max_tokens посреди JSON: сырой «словарь» не показываем."""
+    raw = (
+        '{"type": "theory", "text": "Рациональные числа — это числа. '
+        'Формула: $$F = m \\cdot g$$, а дальше текст обрывается на '
+    )
+    planner = EnvelopePlanner(raw)
+    rt = _runtime(planner)
+    state = AgentGraphState(messages=[], final_answer=raw)
+    out = await rt.finalize(state)
+    assert out["content_envelope"]["type"] == "theory"
+    answer = out["final_answer"]
+    assert answer.startswith("Рациональные числа")
+    assert "type" not in answer and '{"' not in answer
+
+
+@pytest.mark.asyncio
+async def test_finalize_hides_truncated_quiz_raw():
+    """Обрыв на quiz/practice: вместо сырого JSON — вежливый отказ."""
+    raw = '{"type": "quiz", "text": "Вопрос для ученика, который оборвался'
+    planner = EnvelopePlanner(raw)
+    rt = _runtime(planner)
+    state = AgentGraphState(messages=[], final_answer=raw)
+    out = await rt.finalize(state)
+    assert out["content_envelope"]["type"] == "theory"
+    assert "оборвался" in out["final_answer"]
+    assert '{"type": "quiz"' not in out["final_answer"]
