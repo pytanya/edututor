@@ -102,6 +102,24 @@ class QuizThenOpenGrader(LLMClient):
         yield ""
 
 
+class QuizThenPlannerTheory(LLMClient):
+    """Planner возвращает open-quiz, затем theory (сообщение ушло агенту)."""
+
+    def __init__(self):
+        super().__init__(token_counter=_TC())
+        self.calls = 0
+
+    async def chat(self, messages, model, temperature=0.7, max_tokens=1024,
+                   tools=None, tool_choice=None):
+        self.calls += 1
+        payload = _OPEN_QUIZ if self.calls == 1 else _THEORY
+        return LLMResponse(content=payload, model=model,
+                           usage=TokenUsage(1, 1), finish_reason="stop")
+
+    async def chat_stream(self, *a, **k):
+        yield ""
+
+
 class ApproveJudge(LLMClient):
     def __init__(self):
         super().__init__(token_counter=_TC())
@@ -193,6 +211,47 @@ def test_open_quiz_answer_graded_by_llm_grader(tmp_path):
         assert env["type"] == "evaluation"
         assert env["payload"]["correct"] is True
         assert fake.calls == 2  # 1-й planner (quiz) + 1 LLM-грейдер
+
+
+def test_open_quiz_free_form_answer_without_prefix_is_graded(tmp_path):
+    """Свободный ответ без «Ответ: » (набран в чате) тоже перехватывается."""
+    fake = QuizThenOpenGrader()
+    app = _app(tmp_path, fake)
+    with TestClient(app) as c:
+        r1 = _post(c, "дай задание", "s6")
+        assert r1.json()["envelope"]["type"] == "quiz"
+
+        r2 = _post(c, "инерция — это свойство тела сохранять скорость", "s6")
+        env = r2.json()["envelope"]
+        assert env["type"] == "evaluation"
+        assert env["payload"]["correct"] is True
+        assert fake.calls == 2
+
+
+def test_open_quiz_question_to_tutor_goes_to_agent(tmp_path):
+    """Встречный вопрос «расскажи подробнее?» не грейдится как ответ — уходит агенту."""
+    fake = QuizThenPlannerTheory()
+    app = _app(tmp_path, fake)
+    with TestClient(app) as c:
+        r1 = _post(c, "дай задание", "s7")
+        assert r1.json()["envelope"]["type"] == "quiz"
+
+        r2 = _post(c, "а расскажи подробнее, что такое инерция?", "s7")
+        assert r2.json()["envelope"]["type"] == "theory"
+        assert fake.calls == 2  # quiz -> theory (агент отвечал на вопрос, а не грейдил)
+
+
+def test_open_quiz_directive_without_question_mark_goes_to_agent(tmp_path):
+    """Директива без «?» в конце («Объясни, что такое инерция») тоже уходит агенту."""
+    fake = QuizThenPlannerTheory()
+    app = _app(tmp_path, fake)
+    with TestClient(app) as c:
+        r1 = _post(c, "дай задание", "s8")
+        assert r1.json()["envelope"]["type"] == "quiz"
+
+        r2 = _post(c, "Объясни, что такое инерция", "s8")
+        assert r2.json()["envelope"]["type"] == "theory"
+        assert fake.calls == 2
 
 
 def test_grade_writes_journal_and_clears_last_quiz(tmp_path):
