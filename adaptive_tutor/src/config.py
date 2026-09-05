@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     embedding_model: str = Field(
         default="intfloat/multilingual-e5-small", description="Модель эмбеддингов"
     )
+    # LinUCB: советник сложности заданий quiz/practice
+    bandit_enabled: bool = Field(default=True, description="Включить LinUCB-советник")
+    bandit_alpha: float = Field(default=0.6, description="Параметр исследования LinUCB")
+
     # Профиль ученика
     student_db_path: str = Field(
         default="data/students.db", description="Путь к SQLite-файлу профилей"

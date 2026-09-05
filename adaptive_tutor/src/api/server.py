@@ -28,7 +28,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..agent.critic import Critic
-from ..agent.envelope import sanitize_envelope
+from ..agent.envelope import parse_content_envelopes, sanitize_envelope
 from ..agent.loop import AgentRuntime, run_agent
 from ..agent.tools import ToolContext
 from ..config import settings
@@ -311,6 +311,18 @@ def _build_adaptive(
         "topic_accuracy": (topic_payload or {}).get("accuracy"),
         "review_due": review_due,
     }
+
+
+def _bandit_advice(features: list[float], bandit: dict) -> tuple[int, str]:
+    """Рекомендация LinUCB: (индекс руки, текст совета для модели)."""
+    from src.student.linucb import arm_difficulty, bandit_select
+
+    arm = bandit_select(bandit, features, current_arm=1)
+    return arm, (
+        "[Адаптивный совет: для текущего контекста рекомендуемая сложность "
+        f"задания — «{arm_difficulty(arm)}». Учитывай её при выборе сложности, "
+        "но решение за тобой.]"
+    )
 
 
 def _make_provisioner(rag_engine: RAGEngine) -> Provisioner:
@@ -1166,6 +1178,10 @@ async def _run_chat(
     if body.topic:
         await _provision_for(app, topic=body.topic, subject=body.subject, grade=body.grade)
 
+    # LinUCB (Этап 5): фиксация сыгранной руки. Объявляется до ветвления hint —
+    # пост-обработка конверта ниже общая для обычного и hint-ходов.
+    session_bandit: tuple[int, str, list[float]] | None = None
+
     hint_request = body.kind == "hint_request"
     if hint_request:
         # Guard: не более _MAX_HINTS_IN_A_ROW подсказок подряд на одну задачу.
@@ -1199,6 +1215,42 @@ async def _run_chat(
     else:
         _append_user_if_new(app.state.sessions, session_id, body.message)
         context = app.state.sessions.to_llm_context(session_id)
+        # LinUCB (Этап 5): советник сложности — рекомендация модели (не диктат).
+        # Совет добавляем только если нет «висящего» задания (иначе ход — это
+        # ответ ученика, и менять целевую сложность не нужно).
+        if (
+            settings.bandit_enabled
+            and store is not None
+            and student_id
+            and body.topic.strip()
+            and session.bandit_arm is None
+        ):
+            try:
+                from src.student.linucb import arm_difficulty, build_features
+
+                tp = store.get_topic(student_id, body.topic) or {}
+                features = build_features(
+                    accuracy=float(tp.get("accuracy") or 0.0),
+                    attempts=int(tp.get("attempts") or 0),
+                    fatigue=float((profile or {}).get("fatigue_level") or 0.0),
+                    overall=overall_level(store.list_topics(student_id)),
+                )
+                bandit = store.get_topic_bandit(
+                    student_id, body.topic, alpha=settings.bandit_alpha
+                )
+                arm, advice = _bandit_advice(features, bandit)
+                session_bandit = (arm, body.topic, features)
+                context.append({"role": "system", "content": advice})
+                JsonlLogger(settings.log_file).log(
+                    "", "INFO", "bandit.select",
+                    topic=body.topic,
+                    arm=arm,
+                    difficulty=arm_difficulty(arm),
+                    features=[round(v, 4) for v in features],
+                )
+            except Exception as exc:  # noqa: BLE001 — совет не должен ронять чат
+                print(f"[bandit] совет не сформирован: {exc}")
+                session_bandit = None
 
     runtime: AgentRuntime = app.state.runtime_factory()
     rag = app.state.rag_engine
@@ -1216,27 +1268,51 @@ async def _run_chat(
         trace_id=trace_id,
     )
 
-    envelope = state.content_envelope
-    reply = state.final_answer or ""
-    if envelope is None:
-        envelope = ContentEnvelope(type="theory", text=reply)
-    safe_env = sanitize_envelope(envelope) if envelope is not None else None
-    if envelope is not None and envelope.type.value == "quiz":
-        session.last_quiz = _quiz_secret(envelope)
-    if reply:
+    # Конверты хода. Модель иногда отвечает НЕСКОЛЬКИМИ JSON-конвертами подряд
+    # (например, theory + practice) — каждый становится отдельным сообщением и
+    # отдельным блоком в чате, вместо сырого JSON-«словаря» одним текстом.
+    raw_reply = state.final_answer or ""
+    content_envs = state.content_envelopes
+    if content_envs:
+        envelopes = list(content_envs)
+    else:
+        parsed = parse_content_envelopes(raw_reply)
+        if parsed:
+            envelopes = parsed
+        elif state.content_envelope is not None:
+            envelopes = [state.content_envelope]
+        else:
+            envelopes = (
+                [ContentEnvelope(type="theory", text=raw_reply)] if raw_reply else []
+            )
+    envelope = envelopes[-1] if envelopes else None
+    for env in envelopes:
+        if env.type.value == "quiz":
+            session.last_quiz = _quiz_secret(env)
+    if (
+        settings.bandit_enabled
+        and session_bandit is not None
+        and envelope is not None
+        and envelope.type.value in {"quiz", "practice"}
+    ):
+        session.bandit_arm, session.bandit_topic, session.bandit_features = session_bandit
+    safe_envs = [sanitize_envelope(env) for env in envelopes]
+    for env, safe_env in zip(envelopes, safe_envs, strict=True):
+        if not env.text:
+            continue
         app.state.sessions.append_message(
             session_id,
             "assistant",
-            reply,
+            env.text,
             meta={
-                "kind": envelope.type.value,
-                "envelope": safe_env.model_dump() if safe_env is not None else None,
+                "kind": env.type.value,
+                "envelope": safe_env.model_dump(),
             },
         )
 
     # Обновление мастерства темы после evaluation-хода (сбой БД не роняет чат);
     # upsert/register_session уже выполнен выше на каждом ходе.
-    if store is not None and envelope.type.value == "evaluation":
+    if store is not None and envelope is not None and envelope.type.value == "evaluation":
         payload = envelope.payload or {}
         # Answer record из секрета последнего квиза и последнего user-сообщения
         # (E1): идёт и в mastery (apply_result), и в review-банк (add_review_card).
@@ -1263,6 +1339,41 @@ async def _run_chat(
             session.last_quiz = None
         except Exception as exc:  # noqa: BLE001
             print(f"[review] не удалось собрать ответ: {exc}")
+        # LinUCB (Этап 5): обновление бандита наградой за ответ на задание.
+        if (
+            settings.bandit_enabled
+            and session.bandit_arm is not None
+            and session.bandit_topic == body.topic
+            and record is not None
+        ):
+            try:
+                from src.student.linucb import arm_difficulty, bandit_update
+
+                bandit = store.get_topic_bandit(
+                    student_id, session.bandit_topic, alpha=settings.bandit_alpha
+                )
+                reward = 1.0 if record.correct else 0.0
+                bandit_update(
+                    bandit,
+                    list(session.bandit_features),
+                    arm=int(session.bandit_arm),
+                    reward=reward,
+                )
+                store.set_topic_bandit(student_id, session.bandit_topic, bandit)
+                JsonlLogger(settings.log_file).log(
+                    trace_id, "INFO", "bandit.update",
+                    topic=session.bandit_topic,
+                    arm=int(session.bandit_arm),
+                    difficulty=arm_difficulty(int(session.bandit_arm)),
+                    reward=reward,
+                    arms_n=[a["n"] for a in bandit["arms"]],
+                )
+            except Exception as exc:  # noqa: BLE001 — бандит не должен ронять чат
+                print(f"[bandit] не удалось обновить: {exc}")
+            finally:
+                session.bandit_arm = None
+                session.bandit_topic = ""
+                session.bandit_features = []
         # Мастерство темы (EMA/status) по answer record вместо legacy touch_topic.
         if getattr(record, "topic", None):
             try:
@@ -1337,18 +1448,18 @@ async def _run_chat(
                 print(f"[wiki] не удалось применить ответ: {exc}")
 
     next_from_model = None
-    if envelope.payload and envelope.payload.get("next_topic"):
+    if envelope is not None and envelope.payload and envelope.payload.get("next_topic"):
         next_from_model = envelope.payload["next_topic"]
     adaptive = _build_adaptive(
         store, student_id, body.topic, state.difficulty, next_from_model,
         subject=body.subject,
     )
-    safe_env = sanitize_envelope(envelope) if envelope is not None else None
     return state, session_id, trace_id, envelope, adaptive, [
         {
-            "content": reply or (safe_env.text if safe_env is not None else ""),
-            "envelope": safe_env.model_dump() if safe_env is not None else None,
+            "content": safe_env.text or "",
+            "envelope": safe_env.model_dump(),
         }
+        for safe_env in safe_envs
     ]
 
 
@@ -1361,15 +1472,16 @@ def create_app(
 ) -> FastAPI:
     """Создаёт FastAPI-приложение (runtime_factory/rag инъекции — для тестов).
 
-    Если rag_engine не задан и `settings.embedding_provider != "api"`, создаётся
-    общий in-memory RAG-движок; иначе RAG отключён (rag_search вернёт ошибку).
+    Если rag_engine не задан, создаётся общий in-memory RAG-движок; эмбеддер
+    выбирается по `settings.embedding_provider`: local — локальный
+    sentence-transformers, api — OpenAI-совместимый /embeddings RouterAI.
     """
     app = FastAPI(title="Adaptive Tutor API", version="0.2.0")
     app.state.runtime_factory = runtime_factory or build_runtime
     app.state.sessions = sessions or SessionStore()
     app.state.student_store = student_store or StudentStore(settings.resolved_student_db_path)
     app.state.rag_engine = rag_engine
-    if rag_engine is None and settings.embedding_provider != "api":
+    if rag_engine is None:
         app.state.rag_engine = RAGEngine()
     if provisioner is None and app.state.rag_engine is not None:
         app.state.provisioner = _make_provisioner(app.state.rag_engine)
@@ -1436,6 +1548,8 @@ def create_app(
             if messages and messages[-1].get("envelope") is not None
             else None
         )
+        if messages:
+            state = state.model_copy(update={"final_answer": messages[-1].get("content") or ""})
         return _to_response(
             state,
             trace_id=trace_id,

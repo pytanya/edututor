@@ -474,3 +474,244 @@ def test_evaluation_writes_session_record(tmp_path):
     store.close()
 
 
+def test_session_bandit_fields_defaults():
+    from src.api.session_store import SessionStore
+
+    store = SessionStore()
+    session = store.create(student_id="stu_1", topic="т")
+    assert session.bandit_arm is None
+    assert session.bandit_topic == ""
+    assert session.bandit_features == []
+    session.bandit_arm = 2
+    assert store.get(session.session_id).bandit_arm == 2
+
+
+# --- LinUCB (Этап 5): совет перед run_agent и фиксация руки на quiz/practice ---
+
+
+class FakeQuizLLM(LLMClient):
+    """Планировщик: возвращает готовый quiz-конверт (без инструментов)."""
+
+    def __init__(self):
+        self.last_messages = []
+
+    async def chat(
+        self, messages, model, temperature=0.7, max_tokens=1024, tools=None, tool_choice=None
+    ):
+        self.last_messages = list(messages)
+        return LLMResponse(
+            content=(
+                '{"type": "quiz", "text": "Чему равен x в x^2=16?", '
+                '"payload": {"answer_type": "single", "options": ["4", "-4", "4 и -4"], '
+                '"_correct_answer": "4 и -4"}, "difficulty": "medium"}'
+            ),
+            model=model,
+            usage=TokenUsage(prompt_tokens=5, completion_tokens=3),
+            finish_reason="stop",
+        )
+
+    async def chat_stream(self, *args, **kwargs):
+        yield ""
+
+
+def _quiz_runtime_factory():
+    """Собирает AgentRuntime с FakeQuizLLM (для тестов без сети)."""
+    return AgentRuntime(
+        llm=FakeQuizLLM(),
+        models={"planner": "test", "fast": "test", "judge": "test"},
+        tool_context=ToolContext(region="GLOBAL"),
+        critic=Critic(llm=FakeJudgeLLM(), model="judge"),
+    )
+
+
+def test_bandit_quiz_advice_and_arm_marking(tmp_path):
+    fake = FakeQuizLLM()
+    app = create_app(
+        runtime_factory=lambda: AgentRuntime(
+            llm=fake,
+            models={"planner": "test", "fast": "test", "judge": "test"},
+            tool_context=ToolContext(region="GLOBAL"),
+            critic=Critic(llm=FakeJudgeLLM(), model="judge"),
+        ),
+        student_store=StudentStore(str(tmp_path / "students.db")),
+    )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/chat",
+            json={
+                "message": "Дай задание",
+                "session_id": "bandit-s1",
+                "student_id": "stu_bandit",
+                "topic": "квадратные уравнения",
+                "student_profile": {
+                    "current_knowledge_level": 0.6,
+                    "learning_style": "visual",
+                    "fatigue_level": 0.1,
+                },
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["envelope"]["type"] == "quiz"
+        assert body["envelope"]["difficulty"] == "medium"
+        # совет ушёл модели в контексте
+        joined = "\n".join(
+            m.get("content", "") for m in fake.last_messages if m.get("role") == "system"
+        )
+        assert "Адаптивный совет" in joined
+        # сессия запомнила сыгранную руку
+        session = c.app.state.sessions.get("bandit-s1")
+        assert session.bandit_arm in {0, 1, 2}
+        assert session.bandit_topic == "квадратные уравнения"
+        assert len(session.bandit_features) == 4
+
+
+# --- LinUCB (Этап 5): обновление бандита наградой в ветке evaluation ---
+
+
+class FakeQuizThenEvalLLM(FakeQuizLLM):
+    """Ход 1: quiz. Ход 2+: evaluation correct=true."""
+
+    def __init__(self):
+        super().__init__()
+        self.turns = 0
+
+    async def chat(
+        self, messages, model, temperature=0.7, max_tokens=1024, tools=None, tool_choice=None
+    ):
+        self.last_messages = list(messages)
+        self.turns += 1
+        if self.turns == 1:
+            return LLMResponse(
+                content=(
+                    '{"type": "quiz", "text": "Чему равен x в x^2=16?", '
+                    '"payload": {"answer_type": "single", "options": ["4", "-4", "4 и -4"], '
+                    '"_correct_answer": "4 и -4"}, "difficulty": "medium"}'
+                ),
+                model=model,
+                usage=TokenUsage(prompt_tokens=5, completion_tokens=3),
+                finish_reason="stop",
+            )
+        return LLMResponse(
+            content=(
+                '{"type": "evaluation", "text": "Верно!", '
+                '"payload": {"correct": true, "feedback": "ok", "knowledge_delta": 0.2}, '
+                '"difficulty": "medium"}'
+            ),
+            model=model,
+            usage=TokenUsage(prompt_tokens=5, completion_tokens=3),
+            finish_reason="stop",
+        )
+
+
+def test_bandit_update_on_evaluation(tmp_path):
+    store = StudentStore(str(tmp_path / "students.db"))
+    fake = FakeQuizThenEvalLLM()
+    app = create_app(
+        runtime_factory=lambda: AgentRuntime(
+            llm=fake,
+            models={"planner": "test", "fast": "test", "judge": "test"},
+            tool_context=ToolContext(region="GLOBAL"),
+            critic=Critic(llm=FakeJudgeLLM(), model="judge"),
+        ),
+        student_store=store,
+    )
+    with TestClient(app) as c:
+        body = {
+            "session_id": "bandit-s2",
+            "student_id": "stu_bandit",
+            "topic": "квадратные уравнения",
+            "student_profile": {
+                "current_knowledge_level": 0.6,
+                "learning_style": "visual",
+                "fatigue_level": 0.1,
+            },
+        }
+        r1 = c.post("/chat", json={**body, "message": "Дай задание"})
+        assert r1.json()["envelope"]["type"] == "quiz"
+        session = c.app.state.sessions.get("bandit-s2")
+        played_arm = session.bandit_arm
+        assert played_arm is not None
+        before = store.get_topic_bandit("stu_bandit", "квадратные уравнения")["arms"][played_arm][
+            "n"
+        ]
+
+        r2 = c.post("/chat", json={**body, "message": "Ответ: 4 и -4"})
+        assert r2.status_code == 200
+        assert r2.json()["envelope"]["type"] == "evaluation"
+        assert session.bandit_arm is None  # сброшено после обновления
+
+        after = store.get_topic_bandit("stu_bandit", "квадратные уравнения")["arms"][played_arm][
+            "n"
+        ]
+        assert after == before + 1
+    store.close()
+
+
+# --- Несколько JSON-конвертов в одном ответе модели (theory + practice) ---
+
+
+class FakeMultiEnvelopeLLM(FakeTutorLLM):
+    """Планировщик: возвращает ДВА конверта подряд (theory + practice)."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    async def chat(
+        self, messages, model, temperature=0.7, max_tokens=1024, tools=None, tool_choice=None
+    ):
+        self.calls += 1
+        return LLMResponse(
+            content=(
+                '{"type": "theory", "text": "Теория физических явлений.", '
+                '"payload": {"topic": "Физические явления"}, "difficulty": "easy"}\n\n'
+                '{"type": "practice", "text": "Приведите пример явления.", '
+                '"payload": {"task_ref": "daily"}, "difficulty": "medium"}'
+            ),
+            model=model,
+            usage=TokenUsage(prompt_tokens=5, completion_tokens=3),
+            finish_reason="stop",
+        )
+
+    async def chat_stream(self, *args, **kwargs):
+        yield ""
+
+
+def test_chat_multi_envelope_becomes_separate_blocks(tmp_path):
+    """Сырой JSON-«словарь» не должен попадать в чат: каждый конверт — блок."""
+    app = create_app(
+        runtime_factory=lambda: AgentRuntime(
+            llm=FakeMultiEnvelopeLLM(),
+            models={"planner": "test", "fast": "test", "judge": "test"},
+            tool_context=ToolContext(region="GLOBAL"),
+            critic=Critic(llm=FakeJudgeLLM(), model="judge"),
+        ),
+        student_store=StudentStore(str(tmp_path / "students.db")),
+    )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/chat",
+            json={
+                "message": "Объясни и дай задание",
+                "session_id": "multi-1",
+                "student_id": "stu_multi",
+                "topic": "физические явления",
+                "subject": "физика",
+                "grade": "7 класс",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["reply"] == "Приведите пример явления."
+        assert body["envelope"]["type"] == "practice"
+        # в истории оба блока отдельными сообщениями (не сырой JSON)
+        hist = c.get("/chat/history/multi-1").json()["messages"]
+        assistant = [m for m in hist if m.get("role") == "assistant"]
+        assert [m.get("kind") for m in assistant] == ["theory", "practice"]
+        assert assistant[0]["content"] == "Теория физических явлений."
+        assert assistant[1]["content"] == "Приведите пример явления."
+        assert "{\"type\"" not in assistant[0]["content"]
+        assert "{\"type\"" not in assistant[1]["content"]
+
+

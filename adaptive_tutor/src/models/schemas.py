@@ -80,6 +80,7 @@ class AgentGraphState(BaseModel):
     student_profile: dict[str, Any] = Field(default_factory=dict)
     final_answer: str | None = None
     content_envelope: ContentEnvelope | None = None
+    content_envelopes: list[ContentEnvelope] = Field(default_factory=list)
     needs_scaffold: bool = False
     current_knowledge_level: float = Field(0.5, ge=0.0, le=1.0)
     learning_style: LearningStyle = Field(LearningStyle.READING)

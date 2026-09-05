@@ -39,7 +39,7 @@ describe('KnowledgeGraphPanel helpers', () => {
 describe('<KnowledgeGraphPanel/>', () => {
   it('empty state renders without crash', () => {
     render(<KnowledgeGraphPanel nodes={[]} edges={[]} />)
-    expect(screen.getByText('Загрузите учебник или найдите источник — здесь появится карта темы.')).toBeInTheDocument()
+    expect(screen.getByText('Начните занятие по теме — здесь появится карта темы.')).toBeInTheDocument()
     expect(document.querySelector('canvas')).toBeNull()
   })
 

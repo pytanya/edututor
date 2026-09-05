@@ -48,6 +48,45 @@ class LocalEmbedder:
         return [v.tolist() for v in vecs]
 
 
+class ApiEmbedder:
+    """Эмбеддинги через OpenAI-совместимый ``/embeddings`` (RouterAI, регион RU).
+
+    Не требует локального sentence-transformers/torch — векторы считает
+    агрегатор (например, ``intfloat/multilingual-e5-large``). Клиент — sync
+    OpenAI: при конструировании сеть не трогается, запрос уходит только в
+    ``embed``. Внимание: ``embed`` блокирует вызывающий поток (как и
+    ``LocalEmbedder``); при вызове из async-контекста поток выполнения
+    останавливается на время сетевого запроса.
+    """
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+        client: Any | None = None,
+    ):
+        self.model_name = model_name or settings.embedding_model
+        if client is None:
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=api_key or settings.routerai_api_key,
+                base_url=base_url or settings.routerai_base_url,
+                timeout=timeout,
+            )
+        self._client = client
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Эмбеддит тексты батчем, сохраняя порядок входных строк."""
+        if not texts:
+            return []
+        response = self._client.embeddings.create(model=self.model_name, input=texts)
+        ordered = sorted(response.data, key=lambda item: item.index)
+        return [item.embedding for item in ordered]
+
+
 class VectorStore(ABC):
     """Абстракция векторного хранилища."""
 
@@ -128,9 +167,13 @@ class InMemoryVectorStore(VectorStore):
 
 
 def make_embedder() -> Embedder:
+    """Создаёт эмбеддер по `settings.embedding_provider`.
+
+    - ``local`` (по умолчанию) — `LocalEmbedder` (sentence-transformers, e5);
+    - ``api`` — `ApiEmbedder` (OpenAI-совместимый /embeddings RouterAI).
+    """
     if settings.embedding_provider == "api":
-        # API-эмбеддинги (RouterAI/OpenRouter) — заглушка-протокол
-        raise NotImplementedError("API-embedder ещё не подключён")
+        return ApiEmbedder()
     return LocalEmbedder()
 
 

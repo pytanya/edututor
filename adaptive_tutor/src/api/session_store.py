@@ -39,6 +39,9 @@ class ChatSession:
     review_reviewed: int = 0
     messages: list[dict] = field(default_factory=list)
     student_profile: dict = field(default_factory=dict)
+    bandit_arm: int | None = None
+    bandit_topic: str = ""
+    bandit_features: list = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 

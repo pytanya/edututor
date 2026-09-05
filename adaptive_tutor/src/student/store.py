@@ -128,6 +128,7 @@ class StudentStore:
                 "status": "status TEXT DEFAULT 'not_studied'",
                 "weak_areas": "weak_areas TEXT DEFAULT '[]'",
                 "relations": "relations TEXT DEFAULT '{\"prerequisite\":[],\"related\":[]}'",
+                "bandit": "bandit TEXT DEFAULT ''",
             }.items():
                 if col not in topics:
                     self._conn.execute(f"ALTER TABLE topics ADD COLUMN {ddl}")
@@ -584,6 +585,42 @@ class StudentStore:
             (student_id, topic),
         )
         return self._topic_payload(rows[0]) if rows else None
+
+    def get_topic_bandit(
+        self,
+        student_id: str,
+        topic: str,
+        d: int = 4,
+        alpha: float = 0.6,
+    ) -> dict:
+        """LinUCB-состояние темы (JSON `topics.bandit`) или свежий бандит.
+
+        Отсутствие строки/пустое/битое значение даёт свежий бандит
+        (`make_bandit`); параметры d/alpha применяются только при создании.
+        """
+        from .linucb import make_bandit
+
+        rows = self._rows(
+            "SELECT bandit FROM topics WHERE student_id = ? AND topic = ?",
+            (student_id, topic),
+        )
+        raw = rows[0]["bandit"] if rows else ""
+        if raw:
+            try:
+                state = json.loads(raw)
+                if isinstance(state, dict) and state.get("arms"):
+                    return state
+            except (TypeError, ValueError):
+                pass
+        return make_bandit(d=d, alpha=alpha)
+
+    def set_topic_bandit(self, student_id: str, topic: str, bandit: dict) -> None:
+        """Сохраняет состояние бандита темы (UPSERT строки topics)."""
+        self._exec(
+            "INSERT INTO topics (student_id, topic, bandit, last_seen) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(student_id, topic) DO UPDATE SET bandit = excluded.bandit",
+            (student_id, topic, json.dumps(bandit, ensure_ascii=False), time.time()),
+        )
 
     def get_weak_topics(
         self,

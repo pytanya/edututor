@@ -19,11 +19,18 @@ from langgraph.graph import END, START, StateGraph
 
 from ..config import settings
 from ..llm.base import LLMClient, LLMResponse
-from ..models.schemas import AgentGraphState, AgentStep, LearningStyle, ToolCall
+from ..models.schemas import (
+    AgentGraphState,
+    AgentStep,
+    ContentEnvelope,
+    ContentType,
+    LearningStyle,
+    ToolCall,
+)
 from ..observability.logger import JsonlLogger, TraceContext
 from ..safety import IterationLimiter, OutputValidator
 from .critic import Critic
-from .envelope import parse_content_envelope
+from .envelope import parse_content_envelopes
 from .prompts import build_messages
 from .tools import TOOL_SCHEMAS, ToolContext, execute_tool
 
@@ -246,9 +253,20 @@ class AgentRuntime:
         }
 
     async def finalize(self, state: AgentGraphState) -> dict[str, Any]:
-        """Парсит ответ в конверт, валидирует текст, прогоняет Critic."""
+        """Парсит ответ в конверт(ы), валидирует текст, прогоняет Critic.
+
+        Модель иногда отвечает НЕСКОЛЬКИМИ JSON-конвертами подряд (например,
+        theory + practice): первый обрабатывается штатно (валидатор + Critic),
+        остальные сохраняются как есть в ``content_envelopes`` — HTTP-слой
+        превращает каждый в отдельное сообщение-блок чата.
+        """
         raw = state.final_answer or "Не смог сформировать ответ."
-        envelope = parse_content_envelope(raw)
+        all_envs = parse_content_envelopes(raw)
+        envelope = (
+            all_envs[0]
+            if all_envs
+            else ContentEnvelope(type=ContentType.THEORY, text=raw)
+        )
         answer = envelope.text
 
         # Страховка: модель «вызвала» инструмент текстом и не дошла до ответа
@@ -270,6 +288,7 @@ class AgentRuntime:
             return {
                 "final_answer": answer,
                 "content_envelope": envelope.model_dump(),
+                "content_envelopes": [envelope.model_dump()],
                 "terminated": True,
                 "error": "не сформирован финальный ответ",
             }
@@ -291,10 +310,12 @@ class AgentRuntime:
                 self._emit_log(state, "critic", f"критик отклонил: {issues_str}")
 
         envelope.text = answer
+        envelopes = [envelope, *all_envs[1:]]
         self._notify("agent.finalize", {"status": "ok" if ok else "error"})
         result: dict[str, Any] = {
             "final_answer": answer,
             "content_envelope": envelope.model_dump(),
+            "content_envelopes": [env.model_dump() for env in envelopes],
             "terminated": True,
         }
         if not ok:

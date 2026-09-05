@@ -504,7 +504,7 @@ export default function KnowledgeGraphPanel({ nodes = [], edges = [], activeTopi
   if (nodes.length === 0) {
     return (
       <div className="kgp-panel kgp-empty-panel">
-        <div className="kgp-empty">Загрузите учебник или найдите источник — здесь появится карта темы.</div>
+        <div className="kgp-empty">Начните занятие по теме — здесь появится карта темы.</div>
       </div>
     )
   }

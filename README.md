@@ -286,6 +286,19 @@ npm run dev
   `TUTOR_GRAPH_SCHEMA_VERSION`, `TUTOR_ONTOLOGY_MAX_VERTICES`,
   `TUTOR_MASTERY_MASTERED_THRESHOLD`, `TUTOR_MASTERY_MASTERED_ATTEMPTS`.
 
+## LinUCB-советник сложности заданий (Этап 5)
+
+Перед каждым ходом сервер рекомендует модели сложность следующего задания
+(`quiz`/`practice`) через LinUCB contextual bandit: контекст — точность по теме,
+число попыток, усталость и общий уровень; награда — корректность ответа на
+задание (конверт `evaluation`). Рекомендация передаётся модели отдельным
+`system`-сообщением как совет, финальное решение за моделью
+(`envelope.difficulty` не нормализуется). Состояние бандита хранится per
+(студент, тема) в JSON-колонке `topics.bandit` (`data/students.db`, см.
+`src/student/linucb.py` и миграцию в `src/student/store.py`). Конфигурация
+(`.env`, префикс `TUTOR_`): `TUTOR_BANDIT_ENABLED` (вкл/выкл, по умолчанию
+`true`), `TUTOR_BANDIT_ALPHA` (параметр исследования, по умолчанию `0.6`).
+
 ## Карточки для повторений (SM-2)
 
 Автономная подсистема интервальных повторений по алгоритму SM-2:
@@ -357,15 +370,22 @@ E2E-тест не требует запущенного бэкенда: отве
 
 ## Тяжёлая зависимость: локальные эмбеддинги
 
-`rag_search` и провижининг требуют пакет `sentence-transformers`, который
-тянет за собой PyTorch (сотни мегабайт). Он используется только для локальных
-эмбеддингов: по умолчанию `TUTOR_EMBEDDING_PROVIDER=local`, модель
-`intfloat/multilingual-e5-small` (класс `LocalEmbedder`,
-`src/rag/__init__.py`) скачивается один раз при первом обращении к RAG.
+`rag_search` и провижининг по умолчанию используют локальные эмбеддинги через
+пакет `sentence-transformers`, который тянет за собой PyTorch (сотни мегабайт).
+При `TUTOR_EMBEDDING_PROVIDER=local` модель `intfloat/multilingual-e5-small`
+(класс `LocalEmbedder`, `src/rag/__init__.py`) скачивается один раз при первом
+обращении к RAG.
 
-Обычный чат и `web_search` работают и без этой зависимости. Внешняя векторная
-БД проекту не нужна — код использует `InMemoryVectorStore` (векторы живут в
-памяти процесса), поэтому `qdrant-client` намеренно убран из
+**Альтернатива без torch** — `TUTOR_EMBEDDING_PROVIDER=api`: векторы считает
+агрегатор RouterAI через OpenAI-совместимый `/embeddings` (`ApiEmbedder`, там же
+в `src/rag/__init__.py`). Нужен `TUTOR_ROUTERAI_API_KEY` и модель-аналог
+(например, `intfloat/multilingual-e5-large` или `baai/bge-m3` — оба
+мультиязычные). Выбор эмбеддера происходит в `make_embedder()` по значению
+`TUTOR_EMBEDDING_PROVIDER`.
+
+Обычный чат и `web_search` работают без обеих веток эмбеддингов. Внешняя
+векторная БД проекту не нужна — код использует `InMemoryVectorStore` (векторы
+живут в памяти процесса), поэтому `qdrant-client` намеренно убран из
 `pyproject.toml`/`requirements.txt`.
 
 ## Соответствие требованиям курса (OTUS)

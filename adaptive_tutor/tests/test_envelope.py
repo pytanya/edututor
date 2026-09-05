@@ -1,6 +1,6 @@
 """Тесты парсинга финального ответа в ContentEnvelope."""
 
-from src.agent.envelope import parse_content_envelope
+from src.agent.envelope import parse_content_envelope, parse_content_envelopes
 from src.agent.prompts import SYSTEM_PROMPT
 from src.models.schemas import ContentType
 
@@ -69,6 +69,57 @@ def test_plain_text_falls_back_to_theory():
     env = parse_content_envelope("Простое объяснение без JSON")
     assert env.type == ContentType.THEORY
     assert env.text == "Простое объяснение без JSON"
+
+
+def test_two_consecutive_json_objects_parse_to_two():
+    """Модель вернула theory + practice подряд — парсим оба, а не «словарь»."""
+    raw = (
+        '{"type": "theory", "text": "Физические явления — это изменения.", '
+        '"payload": {"topic": "Физические явления"}, "difficulty": "easy"}\n\n'
+        '{"type": "practice", "text": "Приведите пример явления.", '
+        '"payload": {"task_ref": "daily"}, "difficulty": "medium"}'
+    )
+    envelopes = parse_content_envelopes(raw)
+    assert [e.type.value for e in envelopes] == ["theory", "practice"]
+    assert envelopes[0].payload["topic"] == "Физические явления"
+    assert envelopes[1].payload["task_ref"] == "daily"
+    assert envelopes[1].difficulty == "medium"
+
+
+def test_parse_content_envelope_takes_first_of_two():
+    raw = (
+        '{"type": "theory", "text": "Объяснение.", '
+        '"payload": {"topic": "т"}, "difficulty": "easy"}\n\n'
+        '{"type": "practice", "text": "Задание.", '
+        '"payload": {"task_ref": "x"}, "difficulty": "medium"}'
+    )
+    env = parse_content_envelope(raw)
+    assert env.type == ContentType.THEORY
+    assert env.text == "Объяснение."
+
+
+def test_two_objects_with_latex_braces_and_code_fence():
+    raw = (
+        "```json\n"
+        '{"type": "theory", "text": "Формула $$x = \\\\frac{-b \\\\pm \\\\sqrt{D}}{2a}$$.", '
+        '"payload": {"topic": "кв"}, "difficulty": "medium"}\n'
+        "\n```\n"
+        '{"type": "quiz", "text": "Чему равен D?", '
+        '"payload": {"answer_type": "single", "options": ["1", "2"], "_correct_answer": "1"}, '
+        '"difficulty": "hard"}'
+    )
+    envelopes = parse_content_envelopes(raw)
+    assert [e.type.value for e in envelopes] == ["theory", "quiz"]
+    assert "\\frac" in envelopes[0].text
+    assert envelopes[1].payload["answer_type"] == "single"
+
+
+def test_no_json_still_falls_back_to_theory_text():
+    raw = "Просто текст без фигурных скобок."
+    assert parse_content_envelopes(raw) == []
+    env = parse_content_envelope(raw)
+    assert env.type == ContentType.THEORY
+    assert env.text == raw
 
 
 def test_invalid_json_in_fence_falls_back():

@@ -151,8 +151,12 @@ data: {json}
 
 Авто-провижининг: если в `POST /chat`/`/chat/stream` передан `topic`, материалы
 ищутся автоматически перед запуском агента (best-effort, ошибки не роняют чат).
-RAG отключён, если `TUTOR_EMBEDDING_PROVIDER=api` (пока не реализован API-эмбеддер) —
-в этом случае `rag_enabled: false` и `rag_search` вернёт ошибку инструмента.
+Эмбеддинги выбираются `TUTOR_EMBEDDING_PROVIDER`: `local` — локальный
+sentence-transformers (e5-small), `api` — OpenAI-совместимый `/embeddings`
+RouterAI (без torch; для `api` задайте модель-аналог, например
+`intfloat/multilingual-e5-large`). Если провайдер не дал векторов (сбой поиска
+или эмбеддингов), провижининг возвращает `0`, а `rag_search` честно сообщит об
+отсутствии материала.
 
 ---
 
