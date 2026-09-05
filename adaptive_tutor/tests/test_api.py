@@ -246,6 +246,24 @@ def test_post_student_profile_validation_422(client, payload):
     assert resp.status_code == 422
 
 
+def test_hint_request_empty_message_allowed(client):
+    """Кнопка «Подсказка» шлёт пустой message + kind=hint_request (не 422)."""
+    resp = client.post(
+        "/chat",
+        json={
+            "message": "",
+            "kind": "hint_request",
+            "session_id": "ses_148b93f46170",
+            "student_id": "stu_8b16adb3",
+            "topic": "сила тяжести",
+            "subject": "физика",
+            "grade": "7",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reply"]
+
+
 def test_hint_request_does_not_append_user_message(client):
     client.post("/chat", json={"message": "как решить?", "session_id": "sess-h1"})
     client.post(

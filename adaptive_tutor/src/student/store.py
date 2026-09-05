@@ -255,6 +255,14 @@ class StudentStore:
         )
         return rows[0] if rows else None
 
+    def get_session(self, student_id: str, session_id: str) -> dict | None:
+        """Одна сессия ученика (для сводного CSV: точные started_at/ended_at)."""
+        rows = self._rows(
+            "SELECT * FROM sessions WHERE student_id = ? AND session_id = ?",
+            (student_id, session_id),
+        )
+        return rows[0] if rows else None
+
     def list_sessions(self, student_id: str, limit: int = 50) -> list[dict[str, Any]]:
         """Последние сессии ученика: [{session_id, topic, started_at, ended_at}]."""
         if not student_id or limit <= 0:

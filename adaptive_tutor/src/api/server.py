@@ -126,12 +126,13 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def _message_not_blank(self) -> "ChatRequest":
-        """Отклоняет пустые/whitespace-сообщения (422), кроме старта блица.
+        """Отклоняет пустые/whitespace-сообщения (422), кроме служебных kinds.
 
-        review_request приходит с пустым message (карточки шлёт сервер) —
-        для него проверку пропускаем и не триммим пустоту.
+        review_request приходит с пустым message (карточки шлёт сервер);
+        hint_request — кнопка «Подсказка», сообщение подставляется сервером
+        (HINT_SERVICE_TEXT). Для них проверку пропускаем и не триммим пустоту.
         """
-        if self.kind != "review_request" and not (self.message or "").strip():
+        if self.kind not in {"review_request", "hint_request"} and not (self.message or "").strip():
             raise ValueError("message не должен быть пустым")
         self.message = self.message.strip()
         return self
@@ -241,6 +242,43 @@ def _quiz_secret(envelope: ContentEnvelope) -> dict | None:
         "difficulty": envelope.difficulty,
         "correct_answer": (envelope.payload or {}).get("_correct_answer") or "",
     }
+
+
+_QUIZ_REJECT_TEXT = (
+    "Проверочный вопрос не прошёл контроль качества и отменён. "
+    "Напишите «дай задание» или «другой вопрос» — я сформулирую его заново."
+)
+
+
+def _guard_quiz_envelopes(
+    app: FastAPI, trace_id: str, envelopes: list[ContentEnvelope]
+) -> list[ContentEnvelope]:
+    """Серверный контроль quiz-конвертов перед выдачей ученику.
+
+    Квиз, в котором раскрыт ответ (или битая структура — дубли вариантов,
+    эталон не из options и т.п.), заменяется нейтральным theory-сообщением:
+    ученик не получает заведомо некачественный/негрейдуемый вопрос, а secret
+    ``last_quiz`` для него не фиксируется. Причины пишутся в JSONL ``quiz.reject``.
+    """
+    from ..agent.quiz_guard import quiz_problems
+
+    out: list[ContentEnvelope] = []
+    for env in envelopes:
+        if env.type.value != "quiz":
+            out.append(env)
+            continue
+        problems = quiz_problems(env)
+        if not problems:
+            out.append(env)
+            continue
+        JsonlLogger(settings.log_file).log(
+            trace_id, "INFO", "quiz.reject",
+            reasons=problems,
+            text=(env.text or "")[:160],
+            answer_type=(env.payload or {}).get("answer_type"),
+        )
+        out.append(ContentEnvelope(type="theory", text=_QUIZ_REJECT_TEXT))
+    return out
 
 
 _HINT_SERVICE_TEXT = "[ученик просит подсказку к текущей задаче]"
@@ -502,23 +540,40 @@ def _summary_rows(
     records: list[dict],
     mastered_topics: set[str],
 ) -> list[dict[str, Any]]:
-    """Группировка записей по сессии -> одна строка SUMMARY_COLUMNS."""
+    """Группировка записей по сессии -> одна строка SUMMARY_COLUMNS.
+
+    started_at/ended_at берутся из таблицы sessions (точное время занятия),
+    при отсутствии сессии — fallback на мин/макс меток ответов журнала.
+    """
     by_session: dict[str, list[dict]] = {}
     for r in records:
         by_session.setdefault(r.get("session_id") or "", []).append(r)
+    sessions_map: dict[str, dict[str, Any]] = {}
+    if store is not None:
+        for session_id in by_session:
+            s = store.get_session(student_id, session_id)
+            if s is not None:
+                sessions_map[session_id] = s
     rows: list[dict[str, Any]] = []
     for session_id, rows_ in by_session.items():
         ts = [float(r.get("ts") or 0) for r in rows_]
+        sess = sessions_map.get(session_id)
         total = len(rows_)
         correct = sum(1 for r in rows_ if r.get("correct"))
         topics = sorted({str(r.get("topic") or "") for r in rows_ if r.get("topic")})
         mastered = sorted(t for t in topics if t in mastered_topics)
         rows.append({
             "session_id": session_id,
-            "subject": rows_[0].get("subject") or "",
+            "subject": (rows_[0].get("subject") or (sess or {}).get("subject")) or "",
             "topic": " | ".join(topics),
-            "started_at": min(ts) if ts else None,
-            "ended_at": max(ts) if ts else None,
+            "started_at": (
+                (sess or {}).get("started_at") if sess and sess.get("started_at")
+                else (min(ts) if ts else None)
+            ),
+            "ended_at": (
+                (sess or {}).get("ended_at") if sess and sess.get("ended_at")
+                else (max(ts) if ts else None)
+            ),
             "questions": total,
             "correct": correct,
             "accuracy": round(correct / total, 4) if total else 0.0,
@@ -872,6 +927,101 @@ async def _grade_review_card(
         question=str(card.get("question") or ""),
         correct_answer=str(card.get("correct_answer") or ""),
         answer=incoming or "",
+        options=None,
+    )
+
+
+_QUIZ_ANSWER_PREFIX = "Ответ:"
+_OPTION_LETTERS = ("А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "К")
+
+
+def _strip_answer_prefix(message: str) -> str:
+    """Убирает префикс «Ответ: » из сообщения ученика (если есть)."""
+    text = (message or "").strip()
+    if text.lower().startswith(_QUIZ_ANSWER_PREFIX.lower()):
+        return text[len(_QUIZ_ANSWER_PREFIX):].strip()
+    return text
+
+
+def _latest_assistant_kind(sessions: SessionStore, session_id: str) -> str | None:
+    """kind последнего assistant-сообщения сессии (None, если его нет).
+
+    Нужно для серверного грейда квиза: отвечаем только если последним ходом агента
+    был quiz (или подсказка к нему) — это исключает «зависший» last_quiz после
+    посторонних вопросов.
+    """
+    for message in reversed(sessions.list_messages(session_id)):
+        if message.get("role") == "assistant":
+            return message.get("kind")
+    return None
+
+
+
+def _norm_text(value: Any) -> str:
+    """Нормализация для сравнения ответа с вариантом/эталоном."""
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _resolve_option_answer(message: str, quiz: dict) -> str:
+    """Приводит ответ ученика к тексту варианта (буквы А-К → вариант).
+
+    Открытые ответы (без options) и произвольный текст возвращаются без изменений
+    (после среза префикса «Ответ: »).
+    """
+    answer = _strip_answer_prefix(message)
+    options = quiz.get("options")
+    if not options:
+        return answer
+    head = answer.strip()[:1].upper()
+    if head in _OPTION_LETTERS:
+        idx = _OPTION_LETTERS.index(head)
+        if idx < len(options):
+            return str(options[idx])
+    return answer
+
+
+def _looks_like_quiz_answer(message: str, quiz: dict) -> bool:
+    """Похоже на ответ на активный квиз: префикс «Ответ: », вариант или буква."""
+    text = (message or "").strip()
+    if not text:
+        return False
+    if text.lower().startswith(_QUIZ_ANSWER_PREFIX.lower()):
+        return True
+    options = quiz.get("options")
+    if not options:
+        return False
+    norm = _norm_text(text)
+    if any(_norm_text(opt) == norm for opt in options):
+        return True
+    head = text[:1].upper()
+    return head in _OPTION_LETTERS and _OPTION_LETTERS.index(head) < len(options)
+
+
+async def _grade_active_quiz(
+    app: FastAPI, quiz: dict, message: str
+) -> tuple[bool, str]:
+    """Серверный грейд ответа на активный in-chat квиз.
+
+    Закрытый (есть options) — детерминированно: ответ сравнивается с эталоном
+    (буква А-К приводится к тексту варианта). Открытый — коротким LLM-грейдером
+    (role fast), как review-карточки. Возвращает (correct, feedback).
+    """
+    question = str(quiz.get("question") or "")
+    correct_answer = str(quiz.get("correct_answer") or "")
+    options = quiz.get("options")
+    if options:
+        answer = _resolve_option_answer(message, quiz)
+        ok = _norm_text(answer) == _norm_text(correct_answer)
+        feedback = "Верно!" if ok else f"Ошибка. Правильный ответ: {correct_answer}"
+        return bool(ok), feedback
+    runtime: AgentRuntime = app.state.runtime_factory()
+    models = LLMClientFactory.get_models_for_region(settings.region)
+    answer = _strip_answer_prefix(message)
+    return await grade_answer(
+        runtime.llm, str(models.get("fast") or ""),
+        question=question,
+        correct_answer=correct_answer,
+        answer=answer or "",
         options=None,
     )
 
@@ -1260,13 +1410,51 @@ async def _run_chat(
         runtime.on_event = on_event
 
     trace_id = JsonlLogger.new_trace_id()
-    state = await run_agent(
-        runtime,
-        messages=context,
-        session_id=session_id,
-        student_profile=profile,
-        trace_id=trace_id,
-    )
+    # Серверный грейд ответа на активный (не-review) in-chat квиз: если модель
+    # выдала quiz (session.last_quiz зафиксирован) и пришло сообщение-ответ, вердикт
+    # выносится ДО run_agent — закрытый вопрос детерминированно, открытый — коротким
+    # LLM-грейдером. Агент в таких ходах не вызывается: он не видит _correct_answer
+    # и оценивал бы «вслепую» (а порой и просил прислать ответ для проверки).
+    server_grade = None
+    if (
+        body.kind == "message"
+        and session.last_quiz is not None
+        and _latest_assistant_kind(app.state.sessions, session_id) in {"quiz", "hint"}
+        and _looks_like_quiz_answer(body.message, session.last_quiz)
+    ):
+        correct, feedback = await _grade_active_quiz(app, session.last_quiz, body.message)
+        difficulty = str(session.last_quiz.get("difficulty") or "medium")
+        if difficulty not in {"easy", "medium", "hard"}:
+            difficulty = "medium"
+        server_grade = ContentEnvelope(
+            type="evaluation",
+            text=feedback,
+            payload={"correct": correct},
+            difficulty=difficulty,
+        )
+        JsonlLogger(settings.log_file).log(
+            trace_id, "INFO", "quiz.grade",
+            session_id=session_id,
+            answer_type=session.last_quiz.get("answer_type"),
+            correct=correct,
+            server=True,
+        )
+    if server_grade is not None:
+        state = AgentGraphState(
+            messages=[],
+            final_answer=feedback,
+            terminated=True,
+            difficulty=server_grade.difficulty,
+        )
+        state.content_envelopes = [server_grade]
+    else:
+        state = await run_agent(
+            runtime,
+            messages=context,
+            session_id=session_id,
+            student_profile=profile,
+            trace_id=trace_id,
+        )
 
     # Конверты хода. Модель иногда отвечает НЕСКОЛЬКИМИ JSON-конвертами подряд
     # (например, theory + practice) — каждый становится отдельным сообщением и
@@ -1285,6 +1473,10 @@ async def _run_chat(
             envelopes = (
                 [ContentEnvelope(type="theory", text=raw_reply)] if raw_reply else []
             )
+    # Серверный контроль качества quiz: квиз с ответом в вопросе или битой
+    # структурой заменяется на theory (см. _guard_quiz_envelopes); для таких
+    # квизов session.last_quiz не фиксируется и рука бандита не засчитывается.
+    envelopes = _guard_quiz_envelopes(app, trace_id, envelopes)
     envelope = envelopes[-1] if envelopes else None
     for env in envelopes:
         if env.type.value == "quiz":

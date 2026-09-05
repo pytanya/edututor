@@ -352,6 +352,33 @@ def test_export_summary_csv(api_client):
     assert ses_1[8] == "интегралы" and ses_2[8] == "интегралы"
 
 
+def test_export_summary_uses_session_window_when_registered(api_client):
+    """started_at/ended_at сводки берутся из sessions (точное время занятия)."""
+    client, store = api_client
+    store.upsert_student("stu_w")
+    store.register_session("stu_w", "ses_w", "тема", subject="математика")
+    store._exec(
+        "UPDATE sessions SET started_at = ?, ended_at = ? "
+        "WHERE student_id = ? AND session_id = ?",
+        (100.0, 200.0, "stu_w", "ses_w"),
+    )
+    store.append_record(
+        "stu_w", "ses_w",
+        {"record_id": "rec_w1", "ts": 150.0, "subject": "математика", "topic": "тема",
+         "question": "Вопрос?", "options": None, "answer_type": "open",
+         "correct": True, "score01": 1.0, "feedback": "верно"},
+    )
+    resp = client.get("/student/stu_w/export/summary.csv")
+    assert resp.status_code == 200
+    parsed = _parse(resp.content.decode("utf-8-sig"))
+    assert parsed[0] == SUMMARY_COLUMNS
+    row = parsed[1]
+    assert row[1] == "математика"
+    assert row[3] == iso_ts(100.0)
+    assert row[4] == iso_ts(200.0)
+    assert row[5] == "1" and row[6] == "1" and row[7] == "1.0"
+
+
 def test_export_csv_empty_student_only_headers(api_client):
     client, _store = api_client
     resp = client.get("/student/stu_empty/export/csv")
