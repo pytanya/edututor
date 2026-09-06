@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "EduTutor — адаптивная tutoring-система",
+    "quality_profile": "showcase",
+    "viewBox": [1500, 960],
+    "views": [
+      {
+        "id": "request-path",
+        "label": "Основной путь запроса",
+        "focus": ["frontend", "api", "agent", "llm"],
+        "note": "Интерактивный цикл: ученик → фронтенд → API → агент → LLM → возврат ответа"
+      },
+      {
+        "id": "adaptive-loop",
+        "label": "Адаптация и обучение",
+        "focus": ["student-store", "linucb", "review-sm2", "mastery"],
+        "note": "Запись ответов, оценка мастерства, LinUCB bandit, планировщик SM-2"
+      },
+      {
+        "id": "knowledge-layer",
+        "label": "Слой знаний",
+        "focus": ["knowledge-graph", "wiki", "search", "rag"],
+        "note": "Построение графа знаний, wiki-статьи, поиск и RAG provisioning"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "React SPA",
+      "sublabel": "Vite + React",
+      "pos": [30, 400],
+      "size": [160, 80]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI Server",
+      "sublabel": ":8000 SSE",
+      "pos": [280, 400],
+      "size": [170, 80]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "LLM Agent",
+      "sublabel": "Critic · Envelope · Loop",
+      "pos": [560, 180],
+      "size": [170, 80],
+      "tag": "multi-step reasoning"
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "OpenRouter",
+      "sublabel": "LLM Provider",
+      "pos": [840, 100],
+      "size": [150, 80]
+    },
+    {
+      "id": "knowledge-graph",
+      "type": "database",
+      "label": "Knowledge Graph",
+      "sublabel": "JSON graphs",
+      "pos": [560, 400],
+      "size": [170, 80]
+    },
+    {
+      "id": "student-store",
+      "type": "database",
+      "label": "Student Store",
+      "sublabel": "JSON data/",
+      "pos": [280, 600],
+      "size": [170, 80]
+    },
+    {
+      "id": "linucb",
+      "type": "backend",
+      "label": "LinUCB Bandit",
+      "sublabel": "easy/medium/hard",
+      "pos": [560, 600],
+      "size": [170, 80]
+    },
+    {
+      "id": "review-sm2",
+      "type": "backend",
+      "label": "SM-2 Review",
+      "sublabel": "Spaced repetition",
+      "pos": [840, 380],
+      "size": [150, 80]
+    },
+    {
+      "id": "mastery",
+      "type": "backend",
+      "label": "Mastery Model",
+      "sublabel": "Topic mastery",
+      "pos": [840, 540],
+      "size": [150, 80]
+    },
+    {
+      "id": "wiki",
+      "type": "database",
+      "label": "Knowledge Wiki",
+      "sublabel": "Markdown",
+      "pos": [840, 700],
+      "size": [150, 80]
+    },
+    {
+      "id": "search",
+      "type": "external",
+      "label": "Web Search",
+      "sublabel": "DDG · Tavily · Yandex",
+      "pos": [1100, 200],
+      "size": [150, 80]
+    },
+    {
+      "id": "rag",
+      "type": "backend",
+      "label": "RAG Provisioning",
+      "sublabel": "topic context",
+      "pos": [1100, 400],
+      "size": [150, 80]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "EduTutor Backend (Python)",
+      "wraps": ["api", "agent", "knowledge-graph", "student-store", "linucb", "review-sm2", "mastery", "wiki", "rag"]
+    },
+    {
+      "kind": "security-group",
+      "label": "External APIs",
+      "wraps": ["llm", "search"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "frontend-to-api",
+      "from": "frontend",
+      "to": "api",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-to-agent",
+      "from": "api",
+      "to": "agent",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "agent-to-llm",
+      "from": "agent",
+      "to": "llm",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "api-to-knowledge-graph",
+      "from": "api",
+      "to": "knowledge-graph",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-to-student-store",
+      "from": "api",
+      "to": "student-store",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-to-linucb",
+      "from": "api",
+      "to": "linucb",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "knowledge-graph-to-review",
+      "from": "knowledge-graph",
+      "to": "review-sm2",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "linucb-to-student-store",
+      "from": "linucb",
+      "to": "student-store",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "review-to-mastery",
+      "from": "review-sm2",
+      "to": "mastery",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "mastery-to-linucb",
+      "from": "mastery",
+      "to": "linucb",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "knowledge-graph-to-wiki",
+      "from": "knowledge-graph",
+      "to": "wiki",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "search-to-rag",
+      "from": "search",
+      "to": "rag",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "rag-to-agent",
+      "from": "rag",
+      "to": "agent",
+      "fromSide": "left",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Интерфейс",
+      "items": [
+        "React SPA с Vite — Chat, QuizBlock, AdaptivePanel, KnowledgeGraphPanel",
+        "SSE-стриминг событий агента в реальном времени",
+        "Персонализированная карточка знакомства (IntakeCard)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Адаптивное ядро",
+      "items": [
+        "LinUCB contextual bandit — адаптивная сложность (easy/medium/hard)",
+        "SM-2 spaced repetition — планировщик повторений",
+        "Mastery model — отслеживание мастерства по темам"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Знание",
+      "items": [
+        "Граф знаний — узлы тем и их связи (JSON файлы)",
+        "Knowledge Wiki — Markdown-статьи с обогащением",
+        "RAG provisioning — контекстная инъекция по теме урока"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Внешние сервисы",
+      "items": [
+        "OpenRouter API — маршрутизация LLM-запросов",
+        "Web Search — DuckDuckGo, Tavily, Yandex для поиска контента",
+        "Все внешние вызовы проходят через safety guard и circuit breaker"
+      ]
+    }
+  ]
+}
