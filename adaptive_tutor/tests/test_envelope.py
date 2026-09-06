@@ -166,6 +166,42 @@ def test_salvage_truncated_quiz_returns_none():
     assert salvage_truncated_envelope(raw) is None
 
 
+def test_salvage_truncated_quiz_with_text_as_theory_hint():
+    """Обрыв quiz с уже сформированным text: с include_quiz_hint — theory-подсказка.
+
+    Варианты ответов/``_correct_answer`` ещё не написаны, поэтому частичный вопрос
+    безопасно показать ученику как подсказку, а не прятать за отказом.
+    """
+    raw = '{"type": "quiz", "text": "Сколько будет $5 + (-3)$?", "payload": {"answ'
+    assert salvage_truncated_envelope(raw) is None  # по умолчанию секреты не утекают
+    env = salvage_truncated_envelope(raw, include_quiz_hint=True)
+    assert env is not None
+    assert env.type == ContentType.THEORY
+    assert env.text.startswith("Сколько будет $5 + (-3)$?")
+
+
+def test_salvage_truncated_practice_with_text_as_theory_hint():
+    raw = '{"type": "practice", "text": "Реши пример: $5 + (-3) = ?$", "payload": {"task'
+    assert salvage_truncated_envelope(raw) is None
+    env = salvage_truncated_envelope(raw, include_quiz_hint=True)
+    assert env is not None
+    assert env.type == ContentType.THEORY
+    assert env.text == "Реши пример: $5 + (-3) = ?$"
+
+
+def test_salvage_quiz_without_text_returns_none_even_with_hint():
+    """Обрыв ДО появления поля ``"text"``: подсказать нечего — None и с hint."""
+    raw = '{"type": "quiz", "payload": {"answer_type": "single", "options": ["a", "b"]'
+    assert looks_like_truncated_envelope(raw) is True
+    assert salvage_truncated_envelope(raw, include_quiz_hint=True) is None
+
+
+def test_salvage_practice_without_text_returns_none_even_with_hint():
+    raw = '{"type": "practice", "payload": {"task_ref": "x"}, "difficulty": "med'
+    assert salvage_truncated_envelope(raw) is None
+    assert salvage_truncated_envelope(raw, include_quiz_hint=True) is None
+
+
 def test_salvage_ignores_plain_text():
     assert salvage_truncated_envelope("Обычный текст без JSON") is None
     assert looks_like_truncated_envelope("Обычный текст") is False

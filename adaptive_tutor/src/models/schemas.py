@@ -40,6 +40,7 @@ class AgentStep(BaseModel):
     arguments: dict[str, Any] | None = None
     status: Literal["ok", "error", "retry", "terminate"] = "ok"
     duration_ms: int = 0
+    finish_reason: str | None = None
 
 
 class LearningStyle(StrEnum):

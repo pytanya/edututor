@@ -52,11 +52,21 @@ _MAX_CONTEXT_SNIPPETS = 10  # максимум сниппетов RAG в rag_con
 _SNIPPET_CHARS = 600  # максимум символов одного сниппета
 _MAX_OBSERVATION_ITEMS = 8  # сколько позиций показывать модели в наблюдении
 
-# Если модель упёрлась в max_tokens посреди JSON-конверта (не quiz/practice) и
-# спасти theory не удалось — вежливый отказ вместо сырого «словаря» с метаданными.
-_TRUNCATED_FALLBACK_TEXT = (
-    "Извините, ответ получился слишком длинным и оборвался. "
-    "Сформулируйте вопрос короче или разбейте его на несколько сообщений."
+# Если даже после retry-попытки не удалось восстановить оборванный JSON-конверт
+# (finish_reason == "length") — нейтральный отказ вместо сырого «словаря» и вместо
+# обвинения ученика в «слишком длинном вопросе».
+_TRUNCATED_REFUSAL_TEXT = (
+    "Не получилось сформировать ответ. Попробуйте ещё раз или задайте вопрос иначе."
+)
+
+# Инструкция для единственной retry-попытки: модель продолжает свой оборванный
+# JSON-конверт с места обрыва и компактно закрывает объект по схеме конверта.
+_TRUNCATED_RETRY_INSTRUCTION = (
+    "Твой предыдущий ответ — JSON-конверт финального ответа — оборвался на границе "
+    "max_tokens и не был закрыт. Продолжи ровно с места обрыва и закончи его "
+    "КОМПАКТНО: допиши и строго закрой ОДИН JSON-объект по схеме конверта (поля "
+    '"type"/"text"/"payload"/"difficulty"). Не пиши текста вне JSON и не оборачивай '
+    "ответ в markdown-обёртку. Ниже — прерванный префикс твоего ответа:\n\n"
 )
 
 
@@ -277,15 +287,22 @@ class AgentRuntime:
             envelope = all_envs[0]
         else:
             envelope = salvage_truncated_envelope(raw)
-            if envelope is None:
-                if looks_like_truncated_envelope(raw):
-                    # Ответ оборван на недописанном quiz/practice — сырой JSON
-                    # ученику не показываем, а отвечаем вежливым отказом.
+            if envelope is None and looks_like_truncated_envelope(raw):
+                # Ответ оборван на недописанном JSON-конверте (quiz/practice и пр.):
+                # сырой JSON ученику не показываем. Пробуем ОДИН retry «закрой JSON»,
+                # затем — theory-подсказку из сформированного вопроса, и только в
+                # крайнем случае — нейтральный отказ.
+                self._log_truncated(state, raw, attempt=1, outcome="retry")
+                envelope = await self._retry_truncated(state, raw)
+                if envelope is None:
+                    envelope = salvage_truncated_envelope(raw, include_quiz_hint=True)
+                if envelope is None:
+                    self._log_truncated(state, raw, attempt=2, outcome="refusal")
                     envelope = ContentEnvelope(
-                        type=ContentType.THEORY, text=_TRUNCATED_FALLBACK_TEXT
+                        type=ContentType.THEORY, text=_TRUNCATED_REFUSAL_TEXT
                     )
-                else:
-                    envelope = ContentEnvelope(type=ContentType.THEORY, text=raw)
+            elif envelope is None:
+                envelope = ContentEnvelope(type=ContentType.THEORY, text=raw)
         answer = envelope.text
 
         # Страховка: модель «вызвала» инструмент текстом и не дошла до ответа
@@ -340,6 +357,74 @@ class AgentRuntime:
         if not ok:
             result["error"] = err
         return result
+
+    async def _retry_truncated(
+        self, state: AgentGraphState, raw: str
+    ) -> ContentEnvelope | None:
+        """Один повторный вызов planner: закончить оборванный JSON-конверт.
+
+        Вызывается только когда первый ответ похож на недописанный JSON-конверт и
+        ``salvage_truncated_envelope`` его не спас. Модели передаётся прерванный
+        префикс, чтобы она продолжила с места обрыва и компактно закрыла объект.
+        Возвращает None при ошибке LLM, исчерпанном бюджете или пустом ответе.
+        """
+        model = self.models.get(state.current_model, self.models.get("planner", ""))
+        if self.budget and self.budget.exceeded(model):
+            return None
+        instruction = _TRUNCATED_RETRY_INSTRUCTION + (raw or "")
+        messages = [*build_messages(state), {"role": "user", "content": instruction}]
+        try:
+            resp: LLMResponse = await self.llm.chat(
+                messages=messages,
+                model=model,
+                temperature=0.4,
+                max_tokens=settings.llm_max_tokens,
+            )
+        except Exception:  # noqa: BLE001 — fail-soft: отказ вместо падения агента
+            return None
+        if self.budget and resp.usage:
+            self.budget.record(resp.cost_usd)
+        reply = (resp.content or "").strip()
+        if not reply:
+            return None
+        parsed = parse_content_envelopes(reply)
+        if parsed:
+            return parsed[0]
+        envelope = salvage_truncated_envelope(reply)
+        if envelope is not None:
+            return envelope
+        if looks_like_truncated_envelope(reply):
+            return salvage_truncated_envelope(reply, include_quiz_hint=True)
+        return ContentEnvelope(type=ContentType.THEORY, text=reply)
+
+    def _log_truncated(
+        self, state: AgentGraphState, raw: str | None, attempt: int, outcome: str
+    ) -> None:
+        """Пишет событие наблюдаемости final.truncated (без полного raw-текста).
+
+        Полный оборванный ответ не логируется — только длина и короткий префикс,
+        чтобы не раздувать журнал токенами.
+        """
+        if not self.logger:
+            return
+        finish_reason = None
+        for step in reversed(state.steps):
+            if step.action == "final":
+                finish_reason = step.finish_reason
+                break
+        model = self.models.get(state.current_model, self.models.get("planner", ""))
+        self.logger.log(
+            self.trace_id,
+            "WARNING",
+            "final.truncated",
+            agent={"model": model},
+            raw_len=len(raw or ""),
+            finish_reason=finish_reason,
+            prefix=(raw or "")[:40],
+            attempt=attempt,
+            outcome=outcome,
+            session_id=state.session_id,
+        )
 
 
 class _TrackerShim:
@@ -441,6 +526,7 @@ def _step(
         arguments=args,
         status="ok",
         duration_ms=duration_ms,
+        finish_reason=resp.finish_reason,
     )
 
 

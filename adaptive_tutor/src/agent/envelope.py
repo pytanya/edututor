@@ -115,7 +115,9 @@ def _trim_to_balanced_latex(text: str) -> str:
     return text
 
 
-def salvage_truncated_envelope(raw: str | None) -> ContentEnvelope | None:
+def salvage_truncated_envelope(
+    raw: str | None, include_quiz_hint: bool = False
+) -> ContentEnvelope | None:
     """Спасает theory-конверт из оборванного JSON-ответа модели.
 
     Когда модель упёрлась в max_tokens посреди JSON (finish_reason == "length"),
@@ -123,6 +125,12 @@ def salvage_truncated_envelope(raw: str | None) -> ContentEnvelope | None:
     ученику уходил сырой «словарь» с метаданными. Эта функция вынимает ``type``/
     ``text`` из недописанного конверта и возвращает theory-сообщение с тем, что
     модель успела сгенерировать (без хвоста незакрытой формулы).
+
+    Оборванный quiz/practice по умолчанию не спасается (``include_quiz_hint=False``):
+    в ``payload`` недописанного конверта могут лежать варианты ответов и
+    ``_correct_answer`` — показывать их раньше времени нельзя. Но если max_tokens
+    оборвал конверт уже ПОСЛЕ формирования ``"text"`` (``include_quiz_hint=True``),
+    это сформулированный вопрос, а не секрет: его можно вернуть как theory-подсказку.
     """
     raw = (raw or "").strip()
     if not raw.startswith("{"):
@@ -131,9 +139,10 @@ def salvage_truncated_envelope(raw: str | None) -> ContentEnvelope | None:
     text_m = _TEXT_RE.search(raw)
     if type_m is None or text_m is None:
         return None
-    if type_m.group("type") != ContentType.THEORY.value:
-        # Незакрытый quiz/practice показывать нельзя — вернём None, и вызывающий
-        # код ответит вежливым отказом вместо сырого текста.
+    is_theory = type_m.group("type") == ContentType.THEORY.value
+    if not is_theory and not include_quiz_hint:
+        # Незакрытый quiz/practice (или иной не-theory конверт) показывать нельзя —
+        # вернём None, и вызывающий код попробует retry/подсказку/отказ.
         return None
     text, _end = _read_json_string_value(raw, text_m.end() - 1)
     text = _trim_to_balanced_latex(text).strip()
