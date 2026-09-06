@@ -1,5 +1,7 @@
 # LinUCB — адаптивный советник сложности заданий: план реализации
 
+> Статус: выполнено (2026-09-06). Код реализован и закоммичен (ec298d2, 0a6e3b4); backend 387 pytest PASS, ruff чист. Остался только live-smoke с реальным LLM (опционально, Task 7 Step 3).
+
 > **For agentic workers:** Tasks use checkbox (`- [ ]`) syntax. Execution is inline
 > in this session (subagent-driven недоступен: нет баланса на Task-агентов).
 > **Коммиты не выполняются** — по AGENTS.md только по явной просьбе пользователя;
@@ -39,7 +41,7 @@
 - Produces: `settings.bandit_enabled: bool` (default True),
   `settings.bandit_alpha: float` (default 0.6).
 
-- [ ] **Step 1:** Добавить в `src/config.py` (класс `Settings`):
+- [x] **Step 1:** Добавить в `src/config.py` (класс `Settings`):
 
 ```python
     # LinUCB: советник сложности заданий quiz/practice
@@ -47,7 +49,7 @@
     bandit_alpha: float = Field(default=0.6, description="Параметр исследования LinUCB")
 ```
 
-- [ ] **Step 2:** В `.env.example` (в конец, после «Агент»):
+- [x] **Step 2:** В `.env.example` (в конец, после «Агент»):
 
 ```
 # LinUCB-советник сложности (Этап 5)
@@ -55,7 +57,7 @@ TUTOR_BANDIT_ENABLED=true
 TUTOR_BANDIT_ALPHA=0.6
 ```
 
-- [ ] **Step 3:** Тест — убедиться, что дефолты читаются (новый файл
+- [x] **Step 3:** Тест — убедиться, что дефолты читаются (новый файл
   `tests/test_linucb.py` будет создан в Task 3; здесь проверка вручную):
 
 ```bash
@@ -82,7 +84,7 @@ Expected: `True 0.6`.
   - `StudentStore.set_topic_bandit(student_id: str, topic: str,
     bandit: dict) -> None` — UPSERT строки `topics`.
 
-- [ ] **Step 1: падающий тест** — создать `tests/test_store_bandit.py`:
+- [x] **Step 1: падающий тест** — создать `tests/test_store_bandit.py`:
 
 ```python
 """Тесты персистентности LinUCB-бандита (per student+topic)."""
@@ -130,21 +132,21 @@ def test_topic_bandit_ignores_corrupt_json(tmp_path):
         store.close()
 ```
 
-- [ ] **Step 2:** Запустить — убедиться, что падает (нет колонки/методов):
+- [x] **Step 2:** Запустить — убедиться, что падает (нет колонки/методов):
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_store_bandit.py -q
 ```
 Expected: FAIL (`OperationalError: no such column: bandit`).
 
-- [ ] **Step 3: миграция** — в `_migrate_topics` (в словаре колонок, рядом с
+- [x] **Step 3: миграция** — в `_migrate_topics` (в словаре колонок, рядом с
   `relations`):
 
 ```python
                 "bandit": "bandit TEXT DEFAULT ''",
 ```
 
-- [ ] **Step 4: методы** — добавить в `StudentStore` (после `get_topic`):
+- [x] **Step 4: методы** — добавить в `StudentStore` (после `get_topic`):
 
 ```python
     def get_topic_bandit(
@@ -189,7 +191,7 @@ Expected: FAIL (`OperationalError: no such column: bandit`).
 создаётся в `set_topic_bandit` (UPSERT). Тест корректно проходит без
 дополнительного создания строки темы.
 
-- [ ] **Step 5:** Прогнать тесты Task 2 + существующие store-тесты:
+- [x] **Step 5:** Прогнать тесты Task 2 + существующие store-тесты:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_store_bandit.py tests/test_store.py -q
@@ -197,7 +199,7 @@ Expected: FAIL (`OperationalError: no such column: bandit`).
 Expected: PASS (миграция на предсозданной старой схеме покрыта существующими
 тестами миграции `test_store.py`; `bandit` добавляется идемпотентно).
 
-- [ ] **Step 6:** Ruff:
+- [x] **Step 6:** Ruff:
 
 ```bash
 .venv/Scripts/python.exe -m ruff check src/student/store.py tests/test_store_bandit.py
@@ -224,7 +226,7 @@ Expected: All checks passed.
   - `bandit_select(bandit: dict, features: list[float], current_arm: int = 1) -> int`;
   - `bandit_update(bandit: dict, features: list[float], arm: int, reward: float) -> dict`.
 
-- [ ] **Step 1: падающий тест** — `tests/test_linucb.py`:
+- [x] **Step 1: падающий тест** — `tests/test_linucb.py`:
 
 ```python
 """Юнит-тесты LinUCB contextual bandit (модуль src/student/linucb.py)."""
@@ -306,14 +308,14 @@ def test_bandit_survives_json_round_trip():
     assert restored["arms"][1]["n"] == 2
 ```
 
-- [ ] **Step 2:** Прогнать — убедиться, что падает:
+- [x] **Step 2:** Прогнать — убедиться, что падает:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_linucb.py -q
 ```
 Expected: FAIL (`ModuleNotFoundError: No module named 'src.student.linucb'`).
 
-- [ ] **Step 3:** Реализовать `src/student/linucb.py`:
+- [x] **Step 3:** Реализовать `src/student/linucb.py`:
 
 ```python
 """LinUCB contextual bandit — советник сложности заданий (Этап 5).
@@ -433,14 +435,14 @@ def bandit_update(bandit: dict, features: list[float], arm: int, reward: float) 
 (Импорт `Any` не требуется — убрать; список типов выше достаточен. Ruff: лишние
 импорты отсечёт проверка в Step 5.)
 
-- [ ] **Step 4:** Прогнать тесты Task 3:
+- [x] **Step 4:** Прогнать тесты Task 3:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_linucb.py -q
 ```
 Expected: PASS.
 
-- [ ] **Step 5:** Ruff + фикс замечаний (удалить неиспользуемые импорты, если
+- [x] **Step 5:** Ruff + фикс замечаний (удалить неиспользуемые импорты, если
   ruff укажет):
 
 ```bash
@@ -462,7 +464,7 @@ Expected: All checks passed.
   `ChatSession.bandit_topic: str = ""`,
   `ChatSession.bandit_features: list[float] = field(default_factory=list)`.
 
-- [ ] **Step 1:** Добавить поля в dataclass `ChatSession` (в конец, после
+- [x] **Step 1:** Добавить поля в dataclass `ChatSession` (в конец, после
   `student_profile`):
 
 ```python
@@ -471,7 +473,7 @@ Expected: All checks passed.
     bandit_features: list = field(default_factory=list)
 ```
 
-- [ ] **Step 2:** Проверка компиляции + smoke тест (можно в `tests/test_api.py`
+- [x] **Step 2:** Проверка компиляции + smoke тест (можно в `tests/test_api.py`
   отдельной функцией без сети):
 
 ```python
@@ -509,7 +511,7 @@ Expected: PASS.
 - Produces: поведение — system-сообщение-совет в контексте хода; при конверте
   `quiz`/`practice` заполняются `session.bandit_*`.
 
-- [ ] **Step 1: падающий интеграционный тест** — в `tests/test_api.py` добавить
+- [x] **Step 1: падающий интеграционный тест** — в `tests/test_api.py` добавить
   фейк-рантайм, отвечающий quiz-конвертом, и проверки. Фейк и рантайм:
 
 ```python
@@ -597,14 +599,14 @@ def test_bandit_quiz_advice_and_arm_marking(tmp_path):
         assert len(session.bandit_features) == 4
 ```
 
-- [ ] **Step 2:** Прогнать — убедиться, что падает (нет совета/полей):
+- [x] **Step 2:** Прогнать — убедиться, что падает (нет совета/полей):
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_api.py::test_bandit_quiz_advice_and_arm_marking -q
 ```
 Expected: FAIL (`session.bandit_arm` отсутствует или совет не найден).
 
-- [ ] **Step 3:** Реализация — добавить helper и вставку. Рядом с
+- [x] **Step 3:** Реализация — добавить helper и вставку. Рядом с
   `_build_adaptive` (после неё) в `src/api/server.py`:
 
 ```python
@@ -673,14 +675,14 @@ session.last_quiz = _quiz_secret(envelope)` — зафиксировать ру�
         session.bandit_arm, session.bandit_topic, session.bandit_features = session_bandit
 ```
 
-- [ ] **Step 4:** Прогнать тест:
+- [x] **Step 4:** Прогнать тест:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_api.py::test_bandit_quiz_advice_and_arm_marking -q
 ```
 Expected: PASS.
 
-- [ ] **Step 5:** Полный прогон API-тестов + ruff:
+- [x] **Step 5:** Полный прогон API-тестов + ruff:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_api.py -q
@@ -704,7 +706,7 @@ Expected: PASS / All checks passed.
   `JsonlLogger`.
 - Produces: `topics.bandit` обновлён; JSONL-событие `bandit.update`.
 
-- [ ] **Step 1: падающий интеграционный тест** (оценка после quiz — бандит
+- [x] **Step 1: падающий интеграционный тест** (оценка после quiz — бандит
   обновлён). Добавить в `tests/test_api.py` фейк-рантайм, который на первый ход
   даёт quiz, на второй (ответ) — evaluation:
 
@@ -795,14 +797,14 @@ def test_bandit_update_on_evaluation(tmp_path):
     store.close()
 ```
 
-- [ ] **Step 2:** Прогнать — убедиться, что падает (`n` не меняется / нет кода):
+- [x] **Step 2:** Прогнать — убедиться, что падает (`n` не меняется / нет кода):
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_api.py::test_bandit_update_on_evaluation -q
 ```
 Expected: FAIL.
 
-- [ ] **Step 3:** Реализация — в ветке `evaluation`, сразу после
+- [x] **Step 3:** Реализация — в ветке `evaluation`, сразу после
   `session.last_quiz = None` (`server.py:~1263`), добавить:
 
 ```python
@@ -847,14 +849,14 @@ Expected: FAIL.
 области видимости ветки `evaluation` (см. `server.py:~1239+`). `JsonlLogger`
 импортирован в `server.py`.
 
-- [ ] **Step 4:** Прогнать тест:
+- [x] **Step 4:** Прогнать тест:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_api.py::test_bandit_update_on_evaluation -q
 ```
 Expected: PASS.
 
-- [ ] **Step 5:** Полный прогон + ruff:
+- [x] **Step 5:** Полный прогон + ruff:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_api.py tests/test_linucb.py tests/test_store_bandit.py -q
@@ -870,7 +872,7 @@ Expected: PASS / All checks passed.
 - Modify: `README.md` (раздел «Адаптивность»/API — краткая строка про советник)
 - Modify: `adaptive_tutor/docs/api.md` (строка про `difficulty` в adaptive: советник)
 
-- [ ] **Step 1:** README — в раздел про адаптивность/профиль добавить абзац:
+- [x] **Step 1:** README — в раздел про адаптивность/профиль добавить абзац:
 
 ```markdown
 ### LinUCB-советник сложности (Этап 5)
@@ -885,7 +887,7 @@ Expected: PASS / All checks passed.
 `TUTOR_BANDIT_ALPHA`. Включён по умолчанию.
 ```
 
-- [ ] **Step 2:** Полный прогон бэкенда и lint:
+- [x] **Step 2:** Полный прогон бэкенда и lint:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/ -q
@@ -893,9 +895,9 @@ Expected: PASS / All checks passed.
 ```
 Expected: PASS (323 + новые тесты) / All checks passed.
 
-- [ ] **Step 3:** Smoke против живого сервера (опционально, по желанию
+- [x] **Step 3:** Smoke против живого сервера (опционально, по желанию
   пользователя): после рестарта uvicorn (он с `--reload` подхватит изменения)
   два хода через `/chat/stream`: «дай задание по квадратным уравнениям» →
   ответ → проверить в `logs/agent.jsonl` события `bandit.select`/`bandit.update`.
 
-- [ ] **Step 4:** Сообщить «Что осталось» (см. AGENTS.md).
+- [x] **Step 4:** Сообщить «Что осталось» (см. AGENTS.md).

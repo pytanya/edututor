@@ -36,7 +36,8 @@ def test_migration_on_old_db(tmp_path):
     conn.close()
     s = StudentStore(db)
     topic_cols = {r["name"] for r in s._rows("PRAGMA table_info(topics)")}
-    assert {"subject", "mastery", "status", "weak_areas", "relations"} <= topic_cols
+    # bandit (Task 2, LinUCB) — JSON-колонка должна пережить миграцию старых БД
+    assert {"subject", "mastery", "status", "weak_areas", "relations", "bandit"} <= topic_cols
     session_cols = {r["name"] for r in s._rows("PRAGMA table_info(sessions)")}
     assert {"subject", "grade"} <= session_cols
     old = s.get_topic("stu_1", "старая")
