@@ -1,5 +1,5 @@
 // StudentKGPanel — «Мои знания»: статистика и список тем ученика из /knowledge-graph.
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import api from '../api'
 
 export const statusMeta = {
@@ -36,6 +36,9 @@ export default function StudentKGPanel({
   const [kg, setKg] = useState(null)
   const [error, setError] = useState(null)
   const [dueCount, setDueCount] = useState(0)
+  const [activeFilter, setActiveFilter] = useState('all') // all | in_progress | not_studied | mastered
+  const [query, setQuery] = useState('')
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     if (!studentId) return undefined
@@ -73,9 +76,24 @@ export default function StudentKGPanel({
 
   if (!studentId) return null
 
-  const topics = sortedByStatus(
-    Object.entries((kg && kg.topics) || {}).map(([key, t]) => ({ ...t, topic: t?.topic || key })),
+  const rawTopics = useMemo(
+    () =>
+      Object.entries((kg && kg.topics) || {}).map(([key, t]) => ({ ...t, topic: t?.topic || key })),
+    [kg],
   )
+
+  const filteredTopics = useMemo(() => {
+    let topics = sortedByStatus(rawTopics)
+    if (activeFilter !== 'all') {
+      topics = topics.filter((t) => t.status === activeFilter)
+    }
+    if (query.trim()) {
+      const q = query.toLowerCase()
+      topics = topics.filter((t) => (t.topic || '').toLowerCase().includes(q))
+    }
+    return topics
+  }, [rawTopics, activeFilter, query])
+
   const stats = (kg && kg.stats) || {}
 
   const statTiles = [
@@ -85,10 +103,26 @@ export default function StudentKGPanel({
     ['не изучено', stats.not_studied || 0, statusMeta.not_studied.color],
   ]
 
+  const filterButtons = [
+    { key: 'all', label: 'Все', count: rawTopics.length },
+    { key: 'in_progress', label: 'В процессе', count: stats.in_progress || 0 },
+    { key: 'mastered', label: 'Освоено', count: stats.mastered || 0 },
+    { key: 'not_studied', label: 'Не изучено', count: stats.not_studied || 0 },
+  ]
+
   return (
     <section className="panel kg-panel">
       <div className="kg-head">
-        <h3>Мои знания</h3>
+        <button
+          type="button"
+          className="collapsible-header"
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
+        >
+          <span className="collapsible-title">Мои знания</span>
+          {' '}
+          <span className={`collapsible-arrow ${collapsed ? '' : 'open'}`}>▾</span>
+        </button>
         {subject && <span className="kg-subject">· {subject}</span>}
         {onStartReview && dueCount > 0 && (
           <button type="button" className="btn review kg-review" disabled={busy} onClick={onStartReview}>
@@ -97,74 +131,106 @@ export default function StudentKGPanel({
         )}
       </div>
 
-      {error ? (
-        <div className="kg-error">{error}</div>
-      ) : !kg ? (
-        <div className="kg-loading">Загрузка…</div>
-      ) : (
+      {!collapsed && (
         <>
-          <div className="kg-stats">
-            {statTiles.map(([label, value, color]) => (
-              <div key={label} className="kg-stat">
-                <span className="kg-stat-value" style={color ? { color } : undefined}>{value}</span>
-                <span className="kg-stat-label">{label}</span>
-              </div>
-            ))}
-          </div>
-
-          {topics.length === 0 ? (
-            <div className="kg-empty">Тем пока нет. Пройдите квиз по теме — знания накопятся.</div>
+          {error ? (
+            <div className="kg-error">{error}</div>
+          ) : !kg ? (
+            <div className="kg-loading">Загрузка…</div>
           ) : (
-            <ul className="kg-list">
-              {topics.map((t) => {
-                const meta = statusMeta[t.status] || {
-                  order: 1,
-                  label: t.status || '—',
-                  color: statusMeta.not_studied.color,
-                }
-                const attempts = t.attempts || 0
-                const correct = t.correct || 0
-                const accuracy =
-                  typeof t.accuracy === 'number' ? t.accuracy : attempts > 0 ? correct / attempts : 0
-                const weak = Array.isArray(t.weak_areas) ? t.weak_areas : []
-                return (
-                  <li key={t.topic} className={`kg-topic kg-status-${t.status || 'not_studied'}`}>
-                    <span className="kg-status-dot" style={{ background: meta.color }} />
-                    <div className="kg-topic-main">
-                      <div className="kg-topic-title-row">
-                        {onStudy ? (
-                          <button
-                            type="button"
-                            className="kg-topic-name kg-study"
-                            onClick={() => onStudy(t.topic)}
-                          >
-                            {t.topic}
-                          </button>
-                        ) : (
-                          <span className="kg-topic-name">{t.topic}</span>
-                        )}
-                        <span className="kg-topic-status">{meta.label}</span>
-                      </div>
-                      {(attempts > 0 || weak.length > 0) && (
-                        <div className="kg-topic-meta">
-                          {attempts > 0 && (
-                            <span>
-                              {correct}/{attempts} · {Math.round(accuracy * 100)}%
-                            </span>
-                          )}
-                          {weak.length > 0 && (
-                            <span className="kg-weak">
-                              слабые: {weak.slice(0, 2).join(', ')}
-                              {weak.length > 2 ? '…' : ''}
-                            </span>
+            <>
+              <div className="kg-stats">
+                {statTiles.map(([label, value, color]) => (
+                  <div key={label} className="kg-stat">
+                    <span className="kg-stat-value" style={color ? { color } : undefined}>{value}</span>
+                    <span className="kg-stat-label">{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Фильтры по статусу */}
+              <div className="kg-filters">
+                {filterButtons.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    className={`kg-filter-btn ${activeFilter === f.key ? 'active' : ''}`}
+                    onClick={() => setActiveFilter(f.key)}
+                  >
+                    {f.label} <span className="kg-filter-count" aria-hidden="true">{f.count}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Поиск */}
+              <div className="kg-search">
+                <input
+                  type="text"
+                  placeholder="Поиск тем…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+
+              {filteredTopics.length === 0 && rawTopics.length > 0 && (
+                <div className="kg-empty">Ничего не найдено.</div>
+              )}
+
+              {filteredTopics.length === 0 && rawTopics.length === 0 ? (
+                <div className="kg-empty">Тем пока нет. Пройдите квиз по теме — знания накопятся.</div>
+              ) : (
+                <ul className="kg-list">
+                  {filteredTopics.map((t) => {
+                    const meta = statusMeta[t.status] || {
+                      order: 1,
+                      label: t.status || '—',
+                      color: statusMeta.not_studied.color,
+                    }
+                    const attempts = t.attempts || 0
+                    const correct = t.correct || 0
+                    const accuracy =
+                      typeof t.accuracy === 'number' ? t.accuracy : attempts > 0 ? correct / attempts : 0
+                    const weak = Array.isArray(t.weak_areas) ? t.weak_areas : []
+                    return (
+                      <li key={t.topic} className={`kg-topic kg-status-${t.status || 'not_studied'}`}>
+                        <span className="kg-status-dot" style={{ background: meta.color }} />
+                        <div className="kg-topic-main">
+                          <div className="kg-topic-title-row">
+                            {onStudy ? (
+                              <button
+                                type="button"
+                                className="kg-topic-name kg-study"
+                                onClick={() => onStudy(t.topic)}
+                              >
+                                {t.topic}
+                              </button>
+                            ) : (
+                              <span className="kg-topic-name">{t.topic}</span>
+                            )}
+                            <span className="kg-topic-status">{meta.label}</span>
+                          </div>
+                          {(attempts > 0 || weak.length > 0) && (
+                            <div className="kg-topic-meta">
+                              {attempts > 0 && (
+                                <span>
+                                  {correct}/{attempts} · {Math.round(accuracy * 100)}%
+                                </span>
+                              )}
+                              {weak.length > 0 && (
+                                <span className="kg-weak">
+                                  слабые: {weak.slice(0, 2).join(', ')}
+                                  {weak.length > 2 ? '…' : ''}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </>
           )}
         </>
       )}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import StudentKGPanel, { statusMeta, masteryColor } from './StudentKGPanel'
 import api from '../api'
@@ -57,10 +57,11 @@ describe('<StudentKGPanel/>', () => {
     const onStartReview = vi.fn()
     api.getKnowledgeGraph.mockResolvedValue(data())
     api.getReview.mockResolvedValue({ stats: { due: 2 }, due: [] })
-    render(<StudentKGPanel studentId="stu_x" onStartReview={onStartReview} />)
+    const { container } = render(<StudentKGPanel studentId="stu_x" onStartReview={onStartReview} />)
 
     expect(await screen.findByText('Сила')).toBeInTheDocument()
-    expect(screen.getByText('Освоено')).toBeInTheDocument()
+    const row = container.querySelector('.kg-topic')
+    expect(within(row).getByText('Освоено')).toBeInTheDocument()
     expect(screen.getByText('всего')).toBeInTheDocument()
     expect(screen.getByText('освоено')).toBeInTheDocument()
     expect(screen.getByText('3/3 · 100%')).toBeInTheDocument()
@@ -167,5 +168,114 @@ describe('<StudentKGPanel/>', () => {
     expect(await screen.findByText('Сила')).toBeInTheDocument()
     expect(api.getKnowledgeGraph).toHaveBeenCalledTimes(2)
     expect(api.getKnowledgeGraph).toHaveBeenLastCalledWith('stu_x', 'физика')
+  })
+
+  it('фильтрация по статусу: in_progress — показывает только в процессе', async () => {
+    api.getKnowledgeGraph.mockResolvedValue(
+      data(
+        {
+          'Освоенная': topic({ topic: 'Освоенная', status: 'mastered', last_seen: 9 }),
+          'Начатая': topic({ topic: 'Начатая', status: 'in_progress', last_seen: 3 }),
+          'Новая': topic({ topic: 'Новая', status: 'not_studied', last_seen: 7 }),
+        },
+        { mastered: 1, in_progress: 1, not_studied: 1, total: 3 },
+      ),
+    )
+    api.getReview.mockResolvedValue({ stats: { due: 0 }, due: [] })
+    const user = userEvent.setup()
+    render(<StudentKGPanel studentId="stu_x" />)
+
+    await screen.findByText('Начатая')
+    // Изначально все видны
+    expect(screen.getByText('Освоенная')).toBeInTheDocument()
+    expect(screen.getByText('Начатая')).toBeInTheDocument()
+    expect(screen.getByText('Новая')).toBeInTheDocument()
+
+    // Фильтруем по "В процессе"
+    await user.click(screen.getByRole('button', { name: 'В процессе' }))
+
+    expect(screen.queryByText('Освоенная')).not.toBeInTheDocument()
+    expect(screen.getByText('Начатая')).toBeInTheDocument()
+    expect(screen.queryByText('Новая')).not.toBeInTheDocument()
+  })
+
+  it('фильтрация по статусу: mastered — показывает только освоено', async () => {
+    api.getKnowledgeGraph.mockResolvedValue(
+      data(
+        {
+          'Освоенная': topic({ topic: 'Освоенная', status: 'mastered', last_seen: 9 }),
+          'Начатая': topic({ topic: 'Начатая', status: 'in_progress', last_seen: 3 }),
+        },
+        { mastered: 1, in_progress: 1, not_studied: 0, total: 2 },
+      ),
+    )
+    api.getReview.mockResolvedValue({ stats: { due: 0 }, due: [] })
+    const user = userEvent.setup()
+    render(<StudentKGPanel studentId="stu_x" />)
+
+    await screen.findByText('Начатая')
+
+    await user.click(screen.getByRole('button', { name: 'Освоено' }))
+
+    expect(screen.getByText('Освоенная')).toBeInTheDocument()
+    expect(screen.queryByText('Начатая')).not.toBeInTheDocument()
+  })
+
+  it('фильтрация по статусу: all — показывает все темы', async () => {
+    api.getKnowledgeGraph.mockResolvedValue(
+      data(
+        {
+          'Освоенная': topic({ topic: 'Освоенная', status: 'mastered', last_seen: 9 }),
+          'Начатая': topic({ topic: 'Начатая', status: 'in_progress', last_seen: 3 }),
+        },
+        { mastered: 1, in_progress: 1, not_studied: 0, total: 2 },
+      ),
+    )
+    api.getReview.mockResolvedValue({ stats: { due: 0 }, due: [] })
+    const user = userEvent.setup()
+    render(<StudentKGPanel studentId="stu_x" />)
+
+    await screen.findByText('Начатая')
+
+    // Сначала фильтр на "Освоено"
+    await user.click(screen.getByRole('button', { name: 'Освоено' }))
+    expect(screen.queryByText('Начатая')).not.toBeInTheDocument()
+
+    // Возвращаемся на "Все"
+    await user.click(screen.getByRole('button', { name: 'Все' }))
+
+    expect(screen.getByText('Освоенная')).toBeInTheDocument()
+    expect(screen.getByText('Начатая')).toBeInTheDocument()
+  })
+
+  it('клик на тему вызывает onStudy с правильным topic', async () => {
+    api.getKnowledgeGraph.mockResolvedValue(data())
+    api.getReview.mockResolvedValue({ stats: { due: 0 }, due: [] })
+    const user = userEvent.setup()
+    const onStudy = vi.fn()
+    render(<StudentKGPanel studentId="stu_x" onStudy={onStudy} />)
+
+    await screen.findByText('Сила')
+    // Кнопка темы есть
+    const topicBtn = screen.getByRole('button', { name: 'Сила' })
+    await user.click(topicBtn)
+    expect(onStudy).toHaveBeenCalledWith('Сила')
+  })
+
+  it('отображение статуса каждой темы', async () => {
+    api.getKnowledgeGraph.mockResolvedValue(
+      data({
+        'Освоенная': topic({ topic: 'Освоенная', status: 'mastered' }),
+        'Не изученная': topic({ topic: 'Не изученная', status: 'not_studied' }),
+        'В процессе': topic({ topic: 'В процессе', status: 'in_progress' }),
+      }),
+      { mastered: 1, in_progress: 1, not_studied: 1, total: 3 },
+    )
+    api.getReview.mockResolvedValue({ stats: { due: 0 }, due: [] })
+    const { container } = render(<StudentKGPanel studentId="stu_x" />)
+
+    expect(await screen.findByText('Освоенная')).toBeInTheDocument()
+    const labels = [...container.querySelectorAll('.kg-topic-status')].map((n) => n.textContent)
+    expect(labels).toEqual(['В процессе', 'Не изучалось', 'Освоено'])
   })
 })

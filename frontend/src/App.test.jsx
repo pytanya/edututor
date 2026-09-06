@@ -47,8 +47,8 @@ describe('<App/>', () => {
 
   it('renders shell panels', async () => {
     render(<App />)
-    expect(screen.getByText('Новое занятие')).toBeInTheDocument()
-    expect(screen.getByText('Адаптивность')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Новое занятие' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Адаптивность' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('квадратные уравнения')).toBeInTheDocument()
     await screen.findByText('Пока пусто.')
   })
@@ -293,14 +293,14 @@ describe('<App/> онбординг (E3)', () => {
     expect(JSON.parse(localStorage.getItem('edututor_student')).student_id).toBe(sid)
     expect(bodies[0].student_id).toBe(sid)
     expect(bodies[0].topic).toBe('квадратные уравнения')
-    expect(screen.getByText('Новое занятие')).toBeInTheDocument() // карточка закрыта
+    expect(screen.getByRole('heading', { name: 'Новое занятие' })).toBeInTheDocument() // карточка закрыта
   })
 
   it('«Начать без карточки» скрывает карточку и не создаёт профиль', async () => {
     const user = userEvent.setup()
     render(<App />)
     await user.click(await screen.findByRole('button', { name: 'Начать без карточки' }))
-    expect(screen.getByText('Новое занятие')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Новое занятие' })).toBeInTheDocument()
     expect(api.profile).not.toHaveBeenCalled()
     expect(JSON.parse(localStorage.getItem('edututor_student')).student_name).toBeUndefined()
   })
@@ -308,7 +308,7 @@ describe('<App/> онбординг (E3)', () => {
   it('вернувшийся ученик с полным профилем: сразу TopicForm + grade префилл', async () => {
     seedProfile()
     render(<App />)
-    expect(await screen.findByText('Новое занятие')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Новое занятие' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('8 класс').value).toBe('8 класс')
   })
 })

@@ -30,8 +30,10 @@ describe('content blocks', () => {
   it('QuizBlock single sends chosen option', async () => {
     const send = vi.fn()
     render(<QuizBlock envelope={quizSingle} onSend={send} />)
-    await userEvent.click(screen.getByRole('button', { name: '2' }))
+    const second = screen.getByRole('button', { name: /Б\. 2/ })
+    await userEvent.click(second)
     expect(send).toHaveBeenCalledWith('Ответ: 2')
+    expect(second).toHaveTextContent('Б')
   })
 
   it('QuizBlock open submits typed answer', async () => {

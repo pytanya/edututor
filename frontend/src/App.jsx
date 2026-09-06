@@ -12,6 +12,7 @@ import KnowledgeGraphPanel from './components/KnowledgeGraphPanel'
 import TopicForm from './components/TopicForm'
 import IntakeCard from './components/IntakeCard'
 import SessionList from './components/SessionList'
+import CollapsiblePanel from './components/CollapsiblePanel'
 
 const EMPTY_GRAPH = { nodes: [], edges: [], activeTopic: null }
 
@@ -216,18 +217,25 @@ export default function App() {
   return (
     <div className="layout">
       <div className="left">
-        {intakeRequired ? (
-          <IntakeCard
-            prefill={{ name: profile?.student_name || '', learner_type: profile?.learner_type || '', grade: profile?.grade || '' }}
-            onSubmit={handleIntake}
-            onSkip={skipIntake}
-          />
-        ) : (
-          <TopicForm
-            onStart={startTopic}
-            prefill={{ grade: profile?.learner_type === 'schoolchild' ? profile?.grade || '' : '' }}
-          />
-        )}
+        <CollapsiblePanel
+          title={intakeRequired ? 'Знакомство' : 'Новое занятие'}
+          defaultOpen={!intakeRequired}
+          right={null}
+          hideInnerHeader={true}
+        >
+          {intakeRequired ? (
+            <IntakeCard
+              prefill={{ name: profile?.student_name || '', learner_type: profile?.learner_type || '', grade: profile?.grade || '' }}
+              onSubmit={handleIntake}
+              onSkip={skipIntake}
+            />
+          ) : (
+            <TopicForm
+              onStart={startTopic}
+              prefill={{ grade: profile?.learner_type === 'schoolchild' ? profile?.grade || '' : '' }}
+            />
+          )}
+        </CollapsiblePanel>
         <SessionList sessions={sessions} currentId={current?.session_id} onNew={() => {
           clearSession()
           setCurrent(null)
@@ -255,13 +263,26 @@ export default function App() {
         />
       </main>
       <aside className="right">
-        <AdaptivePanel adaptive={feed.adaptive} onStudy={studyNext} busy={busy} />
-        <KnowledgeWikiPanel
-          studentId={studentId}
-          refreshKey={wikiVersion}
-          subject={current?.subject || ''}
-          grade={current?.grade || ''}
-        />
+        <CollapsiblePanel
+          title="Адаптивность"
+          defaultOpen={true}
+          hideInnerHeader={true}
+        >
+          <AdaptivePanel adaptive={feed.adaptive} onStudy={studyNext} busy={busy} />
+        </CollapsiblePanel>
+        <CollapsiblePanel
+          title="Конспекты"
+          defaultOpen={true}
+          badge={null}
+          hideInnerHeader={true}
+        >
+          <KnowledgeWikiPanel
+            studentId={studentId}
+            refreshKey={wikiVersion}
+            subject={current?.subject || ''}
+            grade={current?.grade || ''}
+          />
+        </CollapsiblePanel>
         <StudentKGPanel
           studentId={studentId}
           subject={current?.subject || ''}

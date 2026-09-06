@@ -70,9 +70,17 @@ describe('<KnowledgeWikiPanel/>', () => {
     api.wiki.mockResolvedValue({ subjects: [] })
     render(<KnowledgeWikiPanel studentId="stu_x" />)
     expect(await screen.findByText(EMPTY_TEXT)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '⬇ CSV' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '⬇ Сводка' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '⬇ Журнал (CSV)' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OKF' })).toBeInTheDocument()
+  })
+
+  it('кнопка журнала скачивает CSV журнала ответов', async () => {
+    const user = userEvent.setup()
+    api.wiki.mockResolvedValue({ subjects: [] })
+    api.exportCsv.mockResolvedValue(undefined)
+    render(<KnowledgeWikiPanel studentId="stu_x" />)
+    await user.click(await screen.findByRole('button', { name: '⬇ Журнал (CSV)' }))
+    expect(api.exportCsv).toHaveBeenCalledWith('stu_x')
   })
 
   it('ничего не рендерит без studentId', () => {
@@ -150,5 +158,101 @@ describe('<KnowledgeWikiPanel/>', () => {
     await user.click(within(row).getByRole('button', { name: 'Удалить Поэты Серебряного века' }))
     expect(api.deleteWiki).toHaveBeenCalledWith('stu_x', 'Литература', 'Поэты Серебряного века')
     expect(api.wiki).toHaveBeenCalledTimes(2)
+  })
+
+  it('сворачивание subject: клик скрывает статьи только этого предмета', async () => {
+    const user = userEvent.setup()
+    const mathArticle = lit({ subject: 'Математика', topic: 'Квадратные уравнения', title: 'Квадратные уравнения' })
+    api.wiki.mockResolvedValue({
+      subjects: [
+        litGroup(lit()),
+        { subject: 'Математика', articles: [mathArticle] },
+      ],
+    })
+    api.wikiArticle.mockResolvedValue({ ...lit(), subject: 'Литература' })
+    const { container } = render(<KnowledgeWikiPanel studentId="stu_x" />)
+
+    const groupOf = (subj) =>
+      [...container.querySelectorAll('.wiki-group')].find(
+        (g) => g.querySelector('.wiki-subject')?.textContent === subj,
+      )
+
+    await screen.findByText('Литература')
+    // Обе группы показывают свои статьи
+    expect(groupOf('Литература').querySelector('.wiki-article-row')).not.toBeNull()
+    expect(groupOf('Математика').querySelector('.wiki-article-row')).not.toBeNull()
+
+    // Сворачиваем Математику
+    await user.click(within(groupOf('Математика')).getByRole('heading', { name: 'Математика' }))
+
+    // Статьи Математики скрыты, статьи Литературы на месте
+    expect(groupOf('Математика').querySelector('.wiki-article-row')).toBeNull()
+    expect(groupOf('Литература').querySelector('.wiki-article-row')).not.toBeNull()
+  })
+
+  it('рендерит список статей с title и content preview (mastery badge)', async () => {
+    const article = lit()
+    api.wiki.mockResolvedValue({ subjects: [litGroup(article)] })
+    const { container } = render(<KnowledgeWikiPanel studentId="stu_x" />)
+
+    expect(await screen.findByText('Литература')).toBeInTheDocument()
+    expect(screen.getByText('76%')).toBeInTheDocument()
+
+    const rows = container.querySelectorAll('.wiki-article-row')
+    expect(rows.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('сворачивание/разворачивание subject через клик на header', async () => {
+    const user = userEvent.setup()
+    api.wiki.mockResolvedValue({ subjects: [litGroup()] })
+    const { container } = render(<KnowledgeWikiPanel studentId="stu_x" />)
+
+    expect(await screen.findByText('Литература')).toBeInTheDocument()
+
+    // По умолчанию articles видны
+    let articleRow = container.querySelector('.wiki-article-row')
+    expect(articleRow).toBeInTheDocument()
+
+    // Свёртываем
+    await user.click(screen.getByRole('heading', { name: 'Литература' }))
+
+    // Articles скрыты
+    articleRow = container.querySelector('.wiki-article-row')
+    expect(articleRow).not.toBeInTheDocument()
+
+    // Разворачиваем обратно
+    await user.click(screen.getByRole('heading', { name: 'Литература' }))
+
+    articleRow = container.querySelector('.wiki-article-row')
+    expect(articleRow).toBeInTheDocument()
+  })
+
+  it('поиск фильтрует статьи по названию', async () => {
+    const user = userEvent.setup()
+    const article1 = lit({ topic: 'Алексей Толстой', title: 'Алексей Толстой' })
+    const article2 = lit({ topic: 'Серебряный век', title: 'Серебряный век' })
+    api.wiki.mockResolvedValue({
+      subjects: [
+        { subject: 'Литература', articles: [article1, article2] },
+      ],
+    })
+    const { container } = render(<KnowledgeWikiPanel studentId="stu_x" />)
+
+    const articleTitles = () =>
+      [...container.querySelectorAll('.wiki-article-row .wiki-article-title')].map((n) => n.textContent)
+
+    await screen.findByText('Литература')
+    expect(articleTitles()).toEqual(['Алексей Толстой', 'Серебряный век'])
+
+    const input = screen.getByPlaceholderText('Поиск по конспектам…')
+    await user.type(input, 'Толстой')
+
+    expect(articleTitles()).toEqual(['Алексей Толстой'])
+  })
+
+  it('empty-state: когда нет статей ни в одном предмете', async () => {
+    api.wiki.mockResolvedValue({ subjects: [] })
+    render(<KnowledgeWikiPanel studentId="stu_x" />)
+    expect(await screen.findByText(EMPTY_TEXT)).toBeInTheDocument()
   })
 })

@@ -193,6 +193,25 @@ a { color: var(--green-strong); }
 
 .session-list-head h3 { margin: 0; }
 
+/* Скрыть внутренние заголовки внутри CollapsiblePanel */
+.hide-inner-header > h3,
+.hide-inner-header > .panel > h3,
+.hide-inner-header > .topic-form > h3,
+.hide-inner-header > .adaptive > h3,
+.hide-inner-header > .wiki-panel > .wiki-head > h3,
+.hide-inner-header > .kg-panel > .kg-head > h3 {
+  display: none;
+}
+
+.hide-inner-header > h3::before,
+.hide-inner-header > .panel > h3::before,
+.hide-inner-header > .topic-form > h3::before,
+.hide-inner-header > .adaptive > h3::before,
+.hide-inner-header > .wiki-panel > .wiki-head > h3::before,
+.hide-inner-header > .kg-panel > .kg-head > h3::before {
+  display: none;
+}
+
 @media (max-width: 1024px) {
   .layout { grid-template-columns: 1fr; }
   .left {
@@ -597,12 +616,77 @@ a { color: var(--green-strong); }
 
 /* ---------- Quiz ---------- */
 
+.quiz-question {
+  margin-bottom: 4px;
+}
+
 .quiz-options {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
+
+.quiz-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.quiz-option:hover:not(:disabled) {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+
+.quiz-option-letter {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--paper-deep);
+  color: var(--green-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quiz-option-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.badge.difficulty {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.badge.difficulty.easy { color: var(--green-strong); }
+.badge.difficulty.hard { color: var(--red); }
 
 .quiz-open {
   display: flex;
@@ -1840,4 +1924,230 @@ a { color: var(--green-strong); }
   background: var(--green-soft);
   border: 1px solid rgba(47, 107, 79, 0.3);
   border-radius: 999px;
+}
+
+/* ---------- CollapsiblePanel (аккордеон) ---------- */
+
+.collapsible-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.collapsible-header {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border-radius: 0;
+}
+
+.collapsible-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsible-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--green-strong);
+  background: var(--green-soft);
+  border: 1px solid rgba(47, 107, 79, 0.3);
+  border-radius: 999px;
+  margin-left: 4px;
+}
+
+.collapsible-arrow {
+  font-size: 12px;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.collapsible-arrow.open {
+  transform: rotate(180deg);
+}
+
+.collapsible-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.collapsible-body.open {
+  grid-template-rows: 1fr;
+}
+
+.collapsible-content {
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 8px;
+}
+
+/* ---------- Collapse transitions (Bootstrap-style) ---------- */
+
+.collapse {
+  display: block;
+  visibility: visible;
+  overflow: hidden;
+}
+
+.show > .collapse {
+  display: block;
+}
+
+.collapsing {
+  position: relative;
+  height: 0;
+  overflow: hidden;
+  transition: height ease-in-out 0.35s;
+}
+
+/* Также поддерживаем max-height для сложных контентов */
+.collapsing {
+  height: auto;
+  min-height: 100%;
+}
+
+.collapsible-right {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ---------- Search inputs (общие) ---------- */
+
+.search-input {
+  width: 100%;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  font-family: var(--font-body);
+}
+
+.search-input::placeholder { color: var(--muted); }
+
+.search-input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+/* ---------- Session list search ---------- */
+
+.session-list-search {
+  margin-bottom: 6px;
+}
+
+.session-list-search .search-input {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+/* ---------- Wiki group (сворачивание) ---------- */
+
+.wiki-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wiki-group-header:hover .wiki-subject {
+  color: var(--ink-soft);
+}
+
+.wiki-search {
+  margin-bottom: 6px;
+}
+
+.wiki-search .search-input {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+/* ---------- KG filters (фильтр по статусу) ---------- */
+
+.kg-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.kg-filter-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.kg-filter-btn:hover:not(.active) {
+  border-color: var(--green);
+  color: var(--green-strong);
+}
+
+.kg-filter-btn.active {
+  background: var(--green-soft);
+  border-color: rgba(47, 107, 79, 0.4);
+  color: var(--green-strong);
+}
+
+.kg-filter-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.kg-filter-btn.active .kg-filter-count {
+  color: var(--green-strong);
+}
+
+.kg-search {
+  margin-bottom: 6px;
+}
+
+.kg-search .search-input {
+  padding: 6px 10px;
+  font-size: 12.5px;
 }

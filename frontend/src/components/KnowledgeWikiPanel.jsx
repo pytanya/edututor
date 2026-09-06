@@ -1,6 +1,6 @@
 // KnowledgeWikiPanel — «Конспекты»: предметы/статьи из /student/{id}/wiki,
 // тепловая карта мастерства (MasteryWall), ридер TopicArticle, экспорт CSV/OKF.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../api'
 import MasteryWall, { masteryClass } from './MasteryWall'
 import TopicArticle from './TopicArticle'
@@ -16,6 +16,8 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
   const [article, setArticle] = useState(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [query, setQuery] = useState('')
+  const [collapsedSubjects, setCollapsedSubjects] = useState({})
 
   const load = useCallback(async () => {
     if (!studentId) return
@@ -32,6 +34,10 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
   }, [load, refreshKey])
 
   const fail = (e) => onError?.(e?.message || String(e))
+
+  const toggleSubject = (subj) => {
+    setCollapsedSubjects((prev) => ({ ...prev, [subj]: !prev[subj] }))
+  }
 
   const openArticle = async (a) => {
     if (!studentId) return
@@ -92,14 +98,6 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
     }
   }
 
-  const exportSummary = async () => {
-    try {
-      await api.exportSummary(studentId)
-    } catch (e) {
-      fail(e)
-    }
-  }
-
   const exportOkf = async () => {
     try {
       const res = await api.exportOkf(studentId, subject, grade)
@@ -121,13 +119,25 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
   }
   const wallTopics = cells.map((a) => ({ topic: a.topic, subject: a.subject, mastery: Number(a.mastery) || 0 }))
 
+  const filteredGroups = useMemo(() => {
+    if (!query.trim()) return groups
+    const q = query.toLowerCase()
+    return (groups || []).map((g) => ({
+      ...g,
+      articles: (g.articles || []).filter(
+        (a) =>
+          (a.topic || a.title || '').toLowerCase().includes(q) ||
+          (a.subject || g.subject || '').toLowerCase().includes(q),
+      ),
+    })).filter((g) => (g.articles || []).length > 0)
+  }, [groups, query])
+
   return (
     <section className="panel wiki-panel">
       <div className="wiki-head">
         <h3>Конспекты</h3>
         <div className="export-row">
-          <button type="button" className="btn small" disabled={!studentId} onClick={exportCsv}>⬇ CSV</button>
-          <button type="button" className="btn small" disabled={!studentId} onClick={exportSummary}>⬇ Сводка</button>
+          <button type="button" className="btn small" disabled={!studentId} onClick={exportCsv}>⬇ Журнал (CSV)</button>
           <button type="button" className="btn small" disabled={!studentId} onClick={exportOkf}>OKF</button>
         </div>
       </div>
@@ -139,31 +149,44 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
       ) : (
         <>
           <MasteryWall topics={wallTopics} onSelect={openByTopic} />
+          <div className="wiki-search">
+            <input
+              type="text"
+              placeholder="Поиск по конспектам…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           <div className="wiki-groups">
-            {(groups || []).map((g) => (
+            {(filteredGroups || []).map((g) => (
               <div className="wiki-group" key={g.subject || 'subject'}>
-                <h4 className="wiki-subject">{g.subject}</h4>
-                <ul className="wiki-articles">
-                  {(g.articles || []).map((a) => {
-                    const pct = toPct(a.mastery)
-                    return (
-                      <li className="wiki-article-row" key={a.topic || a.title}>
-                        <button type="button" className="wiki-article-title" onClick={() => openArticle({ ...a, subject: a.subject || g.subject })}>
-                          {a.title || a.topic}
-                        </button>
-                        <span className={`wiki-badge ${masteryClass(Number(a.mastery) || 0)}`}>{pct}%</span>
-                        <span className="wiki-attempts">попыток: {a.attempts || 0}</span>
-                        <button
-                          type="button"
-                          className="wiki-delete"
-                          aria-label={`Удалить ${a.title || a.topic}`}
-                          title="Удалить конспект"
-                          onClick={() => removeArticle({ ...a, subject: a.subject || g.subject })}
-                        >✕</button>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <div className="wiki-group-header" onClick={() => toggleSubject(g.subject || '')}>
+                  <h4 className="wiki-subject">{g.subject}</h4>
+                  <span className={`collapsible-arrow ${collapsedSubjects[g.subject || ''] ? '' : 'open'}`}>▾</span>
+                </div>
+                {!collapsedSubjects[g.subject || ''] && (
+                  <ul className="wiki-articles">
+                    {(g.articles || []).map((a) => {
+                      const pct = toPct(a.mastery)
+                      return (
+                        <li className="wiki-article-row" key={a.topic || a.title}>
+                          <button type="button" className="wiki-article-title" onClick={() => openArticle({ ...a, subject: a.subject || g.subject })}>
+                            {a.title || a.topic}
+                          </button>
+                          <span className={`wiki-badge ${masteryClass(Number(a.mastery) || 0)}`}>{pct}%</span>
+                          <span className="wiki-attempts">попыток: {a.attempts || 0}</span>
+                          <button
+                            type="button"
+                            className="wiki-delete"
+                            aria-label={`Удалить ${a.title || a.topic}`}
+                            title="Удалить конспект"
+                            onClick={() => removeArticle({ ...a, subject: a.subject || g.subject })}
+                          >✕</button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
               </div>
             ))}
           </div>
