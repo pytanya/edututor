@@ -95,6 +95,9 @@ START → planner → (cond) → tools → planner → (cond) → … → final 
   `LLMClientFactory.get_models_for_region` (`src/llm/base.py`).
 - `TUTOR_REGION=RU` → клиент RouterAI; `TUTOR_REGION=GLOBAL` → клиент OpenRouter.
   Каждому клиенту подключён провайдер-специфичный `TokenCounter`.
+- Обоснование выбора моделей (почему RU planner — `qwen/qwen3.7-flash`, а не
+  reasoning `deepseek-v4-flash-0731`) — в `adaptive_tutor/README.md`, раздел
+  «6. Модели по ролям → Почему такие модели».
 
 Состояние и хранение:
 
