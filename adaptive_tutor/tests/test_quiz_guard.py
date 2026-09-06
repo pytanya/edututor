@@ -7,7 +7,13 @@
 from fastapi.testclient import TestClient
 
 from src.agent.loop import AgentRuntime
-from src.agent.quiz_guard import leak_reasons, quiz_problems, structural_issues
+from src.agent.quiz_guard import (
+    QUIZ_BLOCKED_TEXT,
+    QUIZ_REJECT_RETRY_TEXT,
+    leak_reasons,
+    quiz_problems,
+    structural_issues,
+)
 from src.agent.tools import ToolContext
 from src.api.server import create_app
 from src.config import settings
@@ -237,3 +243,51 @@ def test_structural_issues_allows_question_word_starts():
         problems = structural_issues(starter + " такое уравнение?", base_payload)
         assert not any("не является вопросом" in p for p in problems), \
             f"Ожидалось пропустить начало '{starter}'"
+
+
+# --- Quiz.reject: streak и нейтральные тексты на сервере (2026-09-06) --------
+
+
+def _post_msg(client, message, session="ses_q"):
+    resp = client.post(
+        "/chat",
+        json={
+            "message": message,
+            "session_id": session,
+            "student_id": "stu_q",
+            "topic": "инерция",
+            "subject": "физика",
+        },
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_reject_streak_increments_and_text_is_neutral(monkeypatch, tmp_path):
+    """Отклонённый quiz: streak растёт, тексты нейтральные, без loop-фразы."""
+    monkeypatch.setattr(settings, "log_file", str(tmp_path / "tutor.jsonl"))
+    store = StudentStore(str(tmp_path / "students.db"))
+    app = create_app(runtime_factory=lambda: _runtime(leaky=True), student_store=store)
+    app.state.rag_engine = None
+    app.state.provisioner = None
+    with TestClient(app) as c:
+        body1 = _post_msg(c, "давай квиз")
+        session = c.app.state.sessions.get("ses_q")
+        assert session.quiz_reject_streak == 1
+        assert session.quiz_blocked is False
+        assert body1["reply"] == QUIZ_REJECT_RETRY_TEXT
+
+        body2 = _post_msg(c, "другой вопрос")
+        session = c.app.state.sessions.get("ses_q")
+        assert session.quiz_reject_streak == 2
+        assert session.quiz_blocked is True
+        assert body2["reply"] == QUIZ_REJECT_RETRY_TEXT
+
+        body3 = _post_msg(c, "другой вопрос")
+        session = c.app.state.sessions.get("ses_q")
+        assert session.quiz_reject_streak == 3
+        assert session.quiz_blocked is True
+        assert body3["reply"] == QUIZ_BLOCKED_TEXT
+        assert "другой вопрос" not in body3["reply"]
+        assert "сформулирую его заново" not in body3["reply"]
+    store.close()

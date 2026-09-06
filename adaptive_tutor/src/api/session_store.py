@@ -42,6 +42,8 @@ class ChatSession:
     bandit_arm: int | None = None
     bandit_topic: str = ""
     bandit_features: list = field(default_factory=list)
+    quiz_reject_streak: int = 0
+    quiz_blocked: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 

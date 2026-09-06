@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from src.agent.critic import Critic
 from src.agent.loop import AgentRuntime
+from src.agent.quiz_guard import QUIZ_BLOCKED_TEXT, QUIZ_REJECT_RETRY_TEXT
 from src.agent.tools import ToolContext
 from src.api.server import create_app
 from src.config import settings
@@ -731,5 +732,179 @@ def test_chat_multi_envelope_becomes_separate_blocks(tmp_path):
         assert assistant[1]["content"] == "Приведите пример явления."
         assert "{\"type\"" not in assistant[0]["content"]
         assert "{\"type\"" not in assistant[1]["content"]
+
+
+# --- Quiz.reject: восстановление вместо тупика (2026-09-06) -----------------
+
+_BAD_QUIZ = (
+    '{"type": "quiz", "text": "Мерой инертности тела является его масса.", '
+    '"payload": {"answer_type": "single", "options": ["Сила", "Масса", "Энергия", '
+    '"Импульс"], "_correct_answer": "Масса"}, "difficulty": "medium"}'
+)
+_GOOD_QUIZ = (
+    '{"type": "quiz", "text": "Что является мерой инертности тела?", '
+    '"payload": {"answer_type": "single", "options": ["Сила", "Масса", "Энергия", '
+    '"Импульс"], "_correct_answer": "Масса"}, "difficulty": "medium"}'
+)
+_PRACTICE = (
+    '{"type": "practice", "text": "Приведите пример тела, сохраняющего скорость.", '
+    '"payload": {"task_ref": "daily"}, "difficulty": "medium"}'
+)
+
+
+class QueueQuizLLM(LLMClient):
+    """Планировщик с очередью ответов; при переполнении повторяет последний."""
+
+    def __init__(self, *contents: str):
+        self.queue = list(contents)
+        self.calls = 0
+        self.last_messages: list[dict] = []
+
+    async def chat(
+        self, messages, model, temperature=0.7, max_tokens=1024,
+        tools=None, tool_choice=None
+    ):
+        self.calls += 1
+        self.last_messages = list(messages)
+        content = self.queue[min(self.calls - 1, len(self.queue) - 1)]
+        return LLMResponse(
+            content=content,
+            model=model,
+            usage=TokenUsage(prompt_tokens=5, completion_tokens=3),
+            finish_reason="stop",
+        )
+
+    async def chat_stream(self, *args, **kwargs):
+        yield ""
+
+
+def _recovery_app(tmp_path, fake, monkeypatch):
+    """FastAPI app на QueueQuizLLM (без критика) с JSONL во временный файл."""
+    monkeypatch.setattr(settings, "log_file", str(tmp_path / "tutor.jsonl"))
+    app = create_app(
+        runtime_factory=lambda: AgentRuntime(
+            llm=fake,
+            models={"planner": "test", "fast": "test", "judge": "test"},
+            tool_context=ToolContext(region="GLOBAL"),
+            critic=None,
+        ),
+        student_store=StudentStore(str(tmp_path / "students.db")),
+    )
+    app.state.rag_engine = None
+    app.state.provisioner = None
+    return app
+
+
+def _recover_post(client, message, session="recover-s1", student="stu_rec",
+                  topic="инерция"):
+    resp = client.post("/chat", json={
+        "message": message, "session_id": session, "student_id": student,
+        "topic": topic, "subject": "физика",
+    })
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_quiz_rejected_then_regenerated_once(tmp_path, monkeypatch):
+    """Невалидный quiz -> ровно одна регенерация; ученик получает валидный quiz."""
+    fake = QueueQuizLLM(_BAD_QUIZ, _GOOD_QUIZ)
+    app = _recovery_app(tmp_path, fake, monkeypatch)
+    with TestClient(app) as c:
+        body = _recover_post(c, "давай квиз")
+        session = c.app.state.sessions.get("recover-s1")
+        log = (tmp_path / "tutor.jsonl").read_text(encoding="utf-8")
+    assert body["envelope"]["type"] == "quiz"
+    assert "Что является мерой инертности тела?" in body["reply"]
+    assert "контроль качества" not in body["reply"]
+    assert fake.calls == 2  # 1 planner + ровно 1 регенерация
+    joined = "\n".join(m.get("content", "") for m in fake.last_messages)
+    assert "Твой предыдущий quiz-конверт отклонён" in joined
+    assert session.last_quiz is not None
+    assert session.quiz_reject_streak == 0
+    assert session.quiz_blocked is False
+    assert log.count('"event": "quiz.reject"') == 1
+    regen_lines = [ln for ln in log.splitlines() if '"quiz.regen"' in ln]
+    assert len(regen_lines) == 1 and '"status": "ok"' in regen_lines[0]
+
+
+def test_quiz_regen_failure_shows_neutral_fallback_and_streak(tmp_path, monkeypatch):
+    """Регенерация тоже невалидна -> нейтральный retry-текст, streak=1."""
+    fake = QueueQuizLLM(_BAD_QUIZ, _BAD_QUIZ)
+    app = _recovery_app(tmp_path, fake, monkeypatch)
+    with TestClient(app) as c:
+        body = _recover_post(c, "давай квиз")
+        session = c.app.state.sessions.get("recover-s1")
+        log = (tmp_path / "tutor.jsonl").read_text(encoding="utf-8")
+    assert body["envelope"]["type"] == "theory"
+    assert body["reply"] == QUIZ_REJECT_RETRY_TEXT
+    assert "другой вопрос" not in body["reply"]
+    assert "сформулирую его заново" not in body["reply"]
+    assert fake.calls == 2
+    assert session.quiz_reject_streak == 1
+    assert session.quiz_blocked is False
+    assert log.count('"event": "quiz.reject"') == 2  # оригинал + регенерация
+    regen_lines = [ln for ln in log.splitlines() if '"quiz.regen"' in ln]
+    assert len(regen_lines) == 1 and '"status": "failed"' in regen_lines[0]
+
+
+def test_quiz_blocked_after_two_failures_and_practice_unblocks(
+    tmp_path, monkeypatch
+):
+    """Две неудачи -> блок; 3-й quiz не выдаётся; корректная practice снимает блок."""
+    fake = QueueQuizLLM(
+        _BAD_QUIZ, _BAD_QUIZ,  # ход 1: planner + регенерация
+        _BAD_QUIZ, _BAD_QUIZ,  # ход 2: planner + регенерация
+        _BAD_QUIZ,             # ход 3: только planner (блок, без регенерации)
+        _PRACTICE,             # ход 4: practice снимает блок
+    )
+    app = _recovery_app(tmp_path, fake, monkeypatch)
+    with TestClient(app) as c:
+        body1 = _recover_post(c, "давай квиз")
+        session = c.app.state.sessions.get("recover-s1")
+        assert session.quiz_reject_streak == 1
+        assert session.quiz_blocked is False
+        assert body1["reply"] == QUIZ_REJECT_RETRY_TEXT
+
+        body2 = _recover_post(c, "другой вопрос")
+        session = c.app.state.sessions.get("recover-s1")
+        assert session.quiz_reject_streak == 2
+        assert session.quiz_blocked is True
+        assert body2["reply"] == QUIZ_REJECT_RETRY_TEXT
+
+        body3 = _recover_post(c, "другой вопрос")
+        session = c.app.state.sessions.get("recover-s1")
+        assert session.quiz_reject_streak == 3
+        assert session.quiz_blocked is True
+        assert body3["envelope"]["type"] == "theory"
+        assert body3["reply"] == QUIZ_BLOCKED_TEXT
+        assert "другой вопрос" not in body3["reply"]
+        joined = "\n".join(m.get("content", "") for m in fake.last_messages)
+        assert "НЕ выдавай quiz" in joined
+
+        body4 = _recover_post(c, "дай задание")
+        session = c.app.state.sessions.get("recover-s1")
+        assert body4["envelope"]["type"] == "practice"
+        assert session.quiz_reject_streak == 0
+        assert session.quiz_blocked is False
+        assert fake.calls == 6
+    log = (tmp_path / "tutor.jsonl").read_text(encoding="utf-8")
+    assert log.count('"event": "quiz.regen"') == 2  # только ходы 1 и 2
+
+
+def test_valid_quiz_happy_path_unchanged(tmp_path, monkeypatch):
+    """Валидный quiz: без регенерации, last_quiz выставлен, streak не растёт."""
+    fake = QueueQuizLLM(_GOOD_QUIZ)
+    app = _recovery_app(tmp_path, fake, monkeypatch)
+    with TestClient(app) as c:
+        body = _recover_post(c, "дай задание", session="recover-d1",
+                             student="stu_rec", topic="инерция")
+        session = c.app.state.sessions.get("recover-d1")
+        log = (tmp_path / "tutor.jsonl").read_text(encoding="utf-8")
+    assert body["envelope"]["type"] == "quiz"
+    assert fake.calls == 1
+    assert session.last_quiz is not None
+    assert session.quiz_reject_streak == 0
+    assert session.quiz_blocked is False
+    assert '"event": "quiz.regen"' not in log
 
 

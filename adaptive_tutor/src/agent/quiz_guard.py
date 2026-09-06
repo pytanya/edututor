@@ -1,4 +1,4 @@
-"""Серверный контроль качества quiz-конвертов.
+"""Серверный контроль качества quiz и recovery-политика после отклонения.
 
 Модель генерирует квиз свободным текстом, поэтому возможны вопросы-утверждения,
 в которых уже назван правильный ответ («Мерой инертности тела является его
@@ -7,6 +7,12 @@
 Проверка — чистая функция ``quiz_problems``: возвращает список причин отклонения;
 пустой список означает, что квиз структурно корректен и не раскрывает ответ.
 Используется в HTTP-слое (``src/api/server.py``) перед выдачей квиза ученику.
+
+Recovery-политика (тоже чистые хелперы): guard возвращает причины, HTTP-слой
+делает ОДНУ тихую регенерацию; при неудаче счётчик ``quiz_reject_streak`` растёт,
+а после ``QUIZ_REJECT_CAP`` неудач подряд quiz-режим блокируется до первого
+корректного хода. Переход счётчика — ``next_reject_state``; тексты замены —
+``quiz_reject_text`` / ``build_regen_instruction``.
 """
 
 from __future__ import annotations
@@ -135,3 +141,81 @@ def quiz_problems(envelope: Any) -> list[str]:
         options = payload.get("options")
         problems += leak_reasons(str(text), options if isinstance(options, list) else [])
     return problems
+
+
+# --- Recovery после отклонения quiz (чистая политика для HTTP-слоя) ---------
+
+QUIZ_REJECT_CAP = 2
+
+QUIZ_REJECT_RETRY_TEXT = (
+    "Проверочный вопрос не прошёл контроль качества и отменён. "
+    "Попробуйте ещё раз или попросите задание."
+)
+
+QUIZ_BLOCKED_TEXT = (
+    "Проверочные вопросы в этой сессии временно отключены — несколько попыток "
+    "не прошли контроль качества. Перейдём к заданиям: напишите «дай задание», "
+    "и я предложу упражнение."
+)
+
+QUIZ_BLOCKED_NOTE = (
+    "Проверочные вопросы (quiz) в этой сессии отклоняются контролем качества. "
+    "В ЭТОМ ходе НЕ выдавай quiz — дай practice-задание или короткое "
+    "theory-объяснение."
+)
+
+_QUIZ_REGEN_HEAD = (
+    "Твой предыдущий quiz-конверт отклонён серверным контролем качества "
+    "по причинам: {reasons}. Сформулируй ЗАНОВО ОДИН корректный quiz-конверт "
+    "строго по схеме: text — это вопрос с «?» либо предложение с вопросительного "
+    "слова; правильный ответ НЕ раскрывать ни в text, ни в options; "
+    'answer_type "single" — ровно 4 варианта, _correct_answer — ровно один из '
+    'options; answer_type "open" — без вариантов. Если не уверен в корректном '
+    "quiz — верни practice-задание."
+)
+
+
+def quiz_reject_text(blocked: bool) -> str:
+    """Текст theory-замены отклонённого quiz в зависимости от режима сессии.
+
+    blocked=False (streak < CAP): вежливая нейтральная просьба повторить или
+    попросить задание. blocked=True: короткая директива сменить формат на
+    задания — без бесконечных приглашений «другой вопрос».
+    """
+    return QUIZ_BLOCKED_TEXT if blocked else QUIZ_REJECT_RETRY_TEXT
+
+
+def build_regen_instruction(rejected: list[dict]) -> str:
+    """Корректирующая инструкция для одной регенерации quiz.
+
+    Принимает список отклонений вида {"reasons": [...], "text": ...,
+    "answer_type": ...}. Использует ТОЛЬКО строки reasons: текст и ответ
+    отклонённого quiz в промпт не попадают (иначе ученику раскрылся бы
+    _correct_answer).
+    """
+    seen: list[str] = []
+    for record in rejected:
+        for reason in record.get("reasons") or []:
+            reason = str(reason).strip()
+            if reason and reason not in seen:
+                seen.append(reason)
+    reasons = "; ".join(seen) if seen else "структурная невалидность"
+    return _QUIZ_REGEN_HEAD.format(reasons=reasons)
+
+
+def next_reject_state(
+    streak: int, blocked: bool, *, recovered: bool
+) -> tuple[int, bool]:
+    """Переход счётчика отклонений quiz по итогам хода (чистая функция).
+
+    recovered=True — ход закончился контентом без невосстановленного отклонения
+    (guard пропустил quiz, либо выдан practice/theory/evaluation): сброс в
+    (0, False).
+    recovered=False — ход закончился отклонённым quiz без восстановления:
+    streak+1; quiz_blocked=True при streak >= QUIZ_REJECT_CAP — со следующего
+    хода регенерация выключена и модели уходит QUIZ_BLOCKED_NOTE.
+    """
+    if recovered:
+        return 0, False
+    next_streak = streak + 1
+    return next_streak, next_streak >= QUIZ_REJECT_CAP

@@ -357,3 +357,10 @@ def test_get_or_create_updates_subject() -> None:
     assert s2.subject == "математика"
     assert s.last_quiz is None
     assert s.review_active is False
+
+
+def test_chat_session_quiz_reject_defaults() -> None:
+    """ChatSession по умолчанию не имеет неудач quiz и не заблокирована."""
+    session = SessionStore().create()
+    assert session.quiz_reject_streak == 0
+    assert session.quiz_blocked is False

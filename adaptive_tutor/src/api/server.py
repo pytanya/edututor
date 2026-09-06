@@ -30,6 +30,14 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from ..agent.critic import Critic
 from ..agent.envelope import parse_content_envelopes, sanitize_envelope
 from ..agent.loop import AgentRuntime, run_agent
+from ..agent.quiz_guard import (
+    QUIZ_BLOCKED_NOTE,
+    QUIZ_REJECT_CAP,
+    build_regen_instruction,
+    next_reject_state,
+    quiz_problems,
+    quiz_reject_text,
+)
 from ..agent.tools import ToolContext
 from ..config import settings
 from ..export import csv_exporter
@@ -244,25 +252,27 @@ def _quiz_secret(envelope: ContentEnvelope) -> dict | None:
     }
 
 
-_QUIZ_REJECT_TEXT = (
-    "Проверочный вопрос не прошёл контроль качества и отменён. "
-    "Напишите «дай задание» или «другой вопрос» — я сформулирую его заново."
-)
-
-
 def _guard_quiz_envelopes(
-    app: FastAPI, trace_id: str, envelopes: list[ContentEnvelope]
-) -> list[ContentEnvelope]:
+    app: FastAPI,
+    trace_id: str,
+    envelopes: list[ContentEnvelope],
+    fallback_text: str,
+    streak: int | None = None,
+) -> tuple[list[ContentEnvelope], list[dict]]:
     """Серверный контроль quiz-конвертов перед выдачей ученику.
 
     Квиз, в котором раскрыт ответ (или битая структура — дубли вариантов,
-    эталон не из options и т.п.), заменяется нейтральным theory-сообщением:
-    ученик не получает заведомо некачественный/негрейдуемый вопрос, а secret
-    ``last_quiz`` для него не фиксируется. Причины пишутся в JSONL ``quiz.reject``.
-    """
-    from ..agent.quiz_guard import quiz_problems
+    эталон не из options и т.п.), заменяется нейтральным theory-сообщением с
+    текстом ``fallback_text`` (выбирает вызывающий по состоянию сессии). Ученик
+    не получает заведомо некачественный/негрейдуемый вопрос, а secret
+    ``last_quiz`` для него не фиксируется.
 
+    Возвращает кортеж (чистый список, список отклонений). Элемент отклонения:
+    {"reasons": [...], "text": env.text[:160], "answer_type": ...}. Причины
+    пишутся в JSONL ``quiz.reject`` (с числом неудач подряд ``streak``).
+    """
     out: list[ContentEnvelope] = []
+    rejected: list[dict] = []
     for env in envelopes:
         if env.type.value != "quiz":
             out.append(env)
@@ -276,9 +286,59 @@ def _guard_quiz_envelopes(
             reasons=problems,
             text=(env.text or "")[:160],
             answer_type=(env.payload or {}).get("answer_type"),
+            streak=streak,
         )
-        out.append(ContentEnvelope(type="theory", text=_QUIZ_REJECT_TEXT))
-    return out
+        rejected.append(
+            {
+                "reasons": list(problems),
+                "text": (env.text or "")[:160],
+                "answer_type": (env.payload or {}).get("answer_type"),
+            }
+        )
+        out.append(ContentEnvelope(type="theory", text=fallback_text))
+    return out, rejected
+
+
+async def _regen_quiz(
+    runtime: AgentRuntime,
+    context: list[dict],
+    rejected: list[dict],
+    trace_id: str,
+) -> list[ContentEnvelope] | None:
+    """Одна тихая регенерация quiz после отклонения серверным guard.
+
+    Один вызов planner (та же модель, без tools) с corrective-инструкцией по
+    причинам отклонения. Возвращает распарсенные конверты повторного ответа
+    либо None (LLM error / пусто / нераспознанный JSON) — fail-soft.
+    Секрет отклонённого квиза (_correct_answer/options/text) в промпт не
+    попадает: только строки reasons.
+    """
+    model = runtime.models.get("planner", "")
+    instruction = build_regen_instruction(rejected)
+    messages = [*context, {"role": "system", "content": instruction}]
+    log = JsonlLogger(settings.log_file)
+    try:
+        resp = await runtime.llm.chat(
+            messages=messages,
+            model=model,
+            temperature=0.4,
+            max_tokens=settings.llm_max_tokens,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-soft
+        log.log(trace_id, "WARNING", "quiz.regen", status="llm_error",
+                error=str(exc)[:300])
+        return None
+    if runtime.budget and resp.usage:
+        runtime.budget.record(resp.cost_usd)
+    reply = (resp.content or "").strip()
+    if not reply:
+        log.log(trace_id, "WARNING", "quiz.regen", status="empty")
+        return None
+    parsed = parse_content_envelopes(reply)
+    if not parsed:
+        log.log(trace_id, "WARNING", "quiz.regen", status="parse_error")
+        return None
+    return parsed
 
 
 _HINT_SERVICE_TEXT = "[ученик просит подсказку к текущей задаче]"
@@ -1412,6 +1472,10 @@ async def _run_chat(
     else:
         _append_user_if_new(app.state.sessions, session_id, body.message)
         context = app.state.sessions.to_llm_context(session_id)
+        # Quiz.blocked (Task 2): заблокированной сессии модель в ЭТОМ ходе не
+        # выдаёт quiz — только practice/theory (заметка уходит в контекст).
+        if session.quiz_blocked:
+            context.append({"role": "system", "content": QUIZ_BLOCKED_NOTE})
         # LinUCB (Этап 5): советник сложности — рекомендация модели (не диктат).
         # Совет добавляем только если нет «висящего» задания (иначе ход — это
         # ответ ученика, и менять целевую сложность не нужно).
@@ -1523,7 +1587,61 @@ async def _run_chat(
     # Серверный контроль качества quiz: квиз с ответом в вопросе или битой
     # структурой заменяется на theory (см. _guard_quiz_envelopes); для таких
     # квизов session.last_quiz не фиксируется и рука бандита не засчитывается.
-    envelopes = _guard_quiz_envelopes(app, trace_id, envelopes)
+    fallback_text = quiz_reject_text(blocked=session.quiz_blocked)
+    envelopes, rejected = _guard_quiz_envelopes(
+        app,
+        trace_id,
+        envelopes,
+        fallback_text=fallback_text,
+        streak=session.quiz_reject_streak + 1,
+    )
+    # Quiz.regen (Task 3): пока streak ниже CAP и сессия не заблокирована, после
+    # отклонения делаем ОДНУ тихую регенерацию quiz тем же planner. Успешный
+    # повторный quiz/practice ЗАМЕНЯЕТ canned-fallback (rejected очищается —
+    # переход состояния ниже считает ход recovered). Секрет отклонённого квиза
+    # в промпт не попадает (см. _regen_quiz / build_regen_instruction).
+    if (
+        rejected
+        and not review_mode
+        and not hint_request
+        and not session.quiz_blocked
+        and session.quiz_reject_streak < QUIZ_REJECT_CAP
+    ):
+        regen_envs = await _regen_quiz(runtime, context, rejected, trace_id)
+        if regen_envs:
+            regen_out, regen_rejected = _guard_quiz_envelopes(
+                app, trace_id, regen_envs,
+                fallback_text=fallback_text,
+                streak=session.quiz_reject_streak + 1,
+            )
+            if not regen_rejected and any(
+                env.type.value in {"quiz", "practice"} for env in regen_out
+            ):
+                envelopes = regen_out
+                rejected = []
+                JsonlLogger(settings.log_file).log(
+                    trace_id, "INFO", "quiz.regen", status="ok",
+                    type=(
+                        "quiz" if any(
+                            env.type.value == "quiz" for env in regen_out
+                        ) else "practice"
+                    ),
+                    streak=session.quiz_reject_streak + 1,
+                )
+            else:
+                JsonlLogger(settings.log_file).log(
+                    trace_id, "INFO", "quiz.regen", status="failed",
+                    streak=session.quiz_reject_streak + 1,
+                )
+
+    # Quiz.blocked (Task 3): на заблокированной сессии fallback-конверты теории
+    # (текст == fallback_text) не дублируются — оставляем прочий контент хода
+    # либо единственную короткую директиву QUIZ_BLOCKED_TEXT.
+    if session.quiz_blocked and rejected:
+        others = [env for env in envelopes if env.text != fallback_text]
+        envelopes = others if others else [
+            ContentEnvelope(type="theory", text=fallback_text)
+        ]
     envelope = envelopes[-1] if envelopes else None
     for env in envelopes:
         if env.type.value == "quiz":
@@ -1547,6 +1665,16 @@ async def _run_chat(
                 "kind": env.type.value,
                 "envelope": safe_env.model_dump(),
             },
+        )
+
+    # Quiz.reject (Task 2): переход состояния по итогам хода (не на hint-ходе).
+    # rejected непуст => streak растёт; после CAP сессия блокируется, а первый
+    # корректный ход сбрасывает счётчик и снимает блок.
+    if not hint_request:
+        session.quiz_reject_streak, session.quiz_blocked = next_reject_state(
+            session.quiz_reject_streak,
+            session.quiz_blocked,
+            recovered=not rejected,
         )
 
     # Обновление мастерства темы после evaluation-хода (сбой БД не роняет чат);
