@@ -56,6 +56,49 @@ class FakeJudgeLLM(LLMClient):
         yield ""
 
 
+class FakeHintLLM(LLMClient):
+    """Планировщик: на hint-ходе схемы инструментов не получает и отвечает hint.
+
+    Если схемы всё же переданы — воспроизводит наблюдаемый баг: «вызывает»
+    generate_quiz (новый вопрос) вместо подсказки к текущей задаче.
+    """
+
+    def __init__(self):
+        self.saw_tools: list[bool] = []
+
+    async def chat(
+        self, messages, model, temperature=0.7, max_tokens=1024, tools=None, tool_choice=None
+    ):
+        self.saw_tools.append(tools is not None)
+        if tools:
+            return LLMResponse(
+                content="",
+                model=model,
+                usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+                finish_reason="tool_calls",
+                tool_calls=[
+                    {
+                        "function": {
+                            "name": "generate_quiz",
+                            "arguments": json.dumps({"topic": "сила тяжести"}),
+                        }
+                    }
+                ],
+            )
+        return LLMResponse(
+            content=(
+                '{"type": "hint", "text": "Намек: смотри на правую часть уравнения.", '
+                '"payload": {"task_ref": "..."}, "difficulty": "medium"}'
+            ),
+            model=model,
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+            finish_reason="stop",
+        )
+
+    async def chat_stream(self, *args, **kwargs):
+        yield ""
+
+
 def _fake_runtime_factory():
     """Собирает AgentRuntime на фейковых LLM (без сети и API-ключей)."""
     return AgentRuntime(
@@ -278,6 +321,44 @@ def test_hint_request_does_not_append_user_message(client):
     assert roles == ["user", "assistant", "assistant"]
     user_contents = [m["content"] for m in hist if m["role"] == "user"]
     assert "подсказка" not in user_contents
+
+
+def test_hint_request_does_not_invoke_generate_quiz(tmp_path):
+    """На hint-ходе модели не даются схемы инструментов — generate_quiz не вызывается.
+
+    Регрессия: планировщик ошибочно вызывал generate_quiz на просьбу о подсказке
+    и выдавал новый вопрос вместо hint-конверта (allow_tools=False, server.py).
+    """
+    store = StudentStore(str(tmp_path / "students.db"))
+    llm = FakeHintLLM()
+
+    def factory():
+        return AgentRuntime(
+            llm=llm,
+            models={"planner": "test", "fast": "test", "judge": "test"},
+            tool_context=ToolContext(region="GLOBAL"),
+            critic=Critic(llm=FakeJudgeLLM(), model="judge"),
+        )
+
+    app = create_app(runtime_factory=factory, student_store=store)
+    with TestClient(app) as c:
+        resp = c.post(
+            "/chat",
+            json={
+                "message": "",
+                "kind": "hint_request",
+                "session_id": "ses_hint_tools",
+                "student_id": "stu_hint_tools",
+                "topic": "уравнения",
+                "subject": "математика",
+                "grade": "7",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["reply"]
+    store.close()
+    # Планировщик ни разу не получал tool-схемы => не мог вызвать generate_quiz.
+    assert llm.saw_tools and not any(llm.saw_tools)
 
 
 # --- Knowledge provisioning ---

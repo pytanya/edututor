@@ -160,7 +160,7 @@ class AgentRuntime:
             resp: LLMResponse = await self.llm.chat(
                 messages=messages,
                 model=model,
-                tools=TOOL_SCHEMAS,
+                tools=(TOOL_SCHEMAS if state.allow_tools else None),
                 temperature=0.4,
                 max_tokens=settings.llm_max_tokens,
             )
@@ -188,15 +188,17 @@ class AgentRuntime:
 
         # Маршрут
         duration_ms = int((time.time() - start) * 1000)
-        tool_calls = [
-            ToolCall(name=tc["function"]["name"], arguments=_parse_args(tc))
-            for tc in resp.tool_calls
-        ]
-        if not tool_calls:
-            # Некоторые модели/провайдеры не умеют нативные tool_calls и «вызывают»
-            # инструмент текстом («Функция rag_search json {...}»). Это НЕ финальный
-            # ответ — распознаём и исполняем инструмент штатно.
-            tool_calls = _textual_tool_calls(resp.content)
+        tool_calls: list[ToolCall] = []
+        if state.allow_tools:
+            tool_calls = [
+                ToolCall(name=tc["function"]["name"], arguments=_parse_args(tc))
+                for tc in resp.tool_calls
+            ]
+            if not tool_calls:
+                # Некоторые модели/провайдеры не умеют нативные tool_calls и «вызывают»
+                # инструмент текстом («Функция rag_search json {...}»). Это НЕ финальный
+                # ответ — распознаём и исполняем инструмент штатно.
+                tool_calls = _textual_tool_calls(resp.content)
 
         if tool_calls:
             first = tool_calls[0]
@@ -708,6 +710,7 @@ async def run_agent(
     session_id: str = "",
     student_profile: dict | None = None,
     trace_id: str = "",
+    allow_tools: bool = True,
 ) -> AgentGraphState:
     """Точка входа: запускает агентный цикл с лимитами времени."""
     runtime.trace_id = trace_id or TraceContext.current() or JsonlLogger.new_trace_id()
@@ -719,6 +722,7 @@ async def run_agent(
         session_id=session_id,
         messages=messages,
         student_profile=profile,
+        allow_tools=allow_tools,
         **_adaptive_fields(profile),
     )
     try:

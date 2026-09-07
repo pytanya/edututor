@@ -90,3 +90,4 @@ class AgentGraphState(BaseModel):
     steps: list[AgentStep] = Field(default_factory=list)
     terminated: bool = False
     error: str | None = None
+    allow_tools: bool = True

@@ -438,6 +438,11 @@ async def _regen_quiz(
 
 
 _HINT_SERVICE_TEXT = "[ученик просит подсказку к текущей задаче]"
+_HINT_ANSWER_NOTE = (
+    "Ученик просит подсказку к текущему заданию. Ответь ТОЛЬКО конвертом типа "
+    "hint: дай направление к решению, НЕ раскрывай полное решение/эталон и НЕ "
+    "создавай новых вопросов. Инструменты в этом ходе недоступны."
+)
 _MAX_HINTS_IN_A_ROW = 2
 
 
@@ -1565,6 +1570,10 @@ async def _run_chat(
         # Служебный контекст вместо обычного сообщения ученика
         context = app.state.sessions.to_llm_context(session_id)
         context.append({"role": "user", "content": _HINT_SERVICE_TEXT})
+        # Hint-ход без инструментов: модели не даются схемы (allow_tools=False),
+        # иначе planner может ошибочно вызвать generate_quiz и выдать новый вопрос
+        # вместо подсказки к текущей задаче.
+        context.append({"role": "system", "content": _HINT_ANSWER_NOTE})
     else:
         _append_user_if_new(app.state.sessions, session_id, body.message)
         context = app.state.sessions.to_llm_context(session_id)
@@ -1661,6 +1670,7 @@ async def _run_chat(
             session_id=session_id,
             student_profile=profile,
             trace_id=trace_id,
+            allow_tools=not hint_request,
         )
 
     # Конверты хода. Модель иногда отвечает НЕСКОЛЬКИМИ JSON-конвертами подряд
