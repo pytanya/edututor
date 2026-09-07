@@ -1,7 +1,10 @@
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from ..config import Region, settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,7 +76,12 @@ class SearchRouter:
         if settings.ddgs_enabled:
             from .duckduckgo import DuckDuckGoSearch
             engines.append(DuckDuckGoSearch())
-        
+
+        logger.info(
+            "Собран список поисковых движков для региона %s: %s",
+            region.value,
+            [engine.__class__.__name__ for engine in engines] or "нет движков",
+        )
         return engines
     
     @classmethod
@@ -89,15 +97,43 @@ class SearchRouter:
             try:
                 results = await engine.search(query, max_results)
                 if results:
+                    logger.info(
+                        "Поисковый движок %s вернул %d результатов (запрос %r)",
+                        engine.__class__.__name__,
+                        len(results),
+                        query[:120],
+                    )
                     return results
+                logger.warning(
+                    "Поисковый движок %s вернул пустой результат (запрос %r)",
+                    engine.__class__.__name__,
+                    query[:120],
+                )
             except SearchTimeoutError as e:
-                print(f"[fallback] {engine.__class__.__name__} таймаут: {e}")
+                logger.warning(
+                    "[fallback] %s таймаут: %s",
+                    engine.__class__.__name__,
+                    e,
+                )
                 continue
             except SearchRateLimitError as e:
-                print(f"[fallback] {engine.__class__.__name__} rate limit: {e}")
+                logger.warning(
+                    "[fallback] %s rate limit: %s",
+                    engine.__class__.__name__,
+                    e,
+                )
                 continue
             except Exception as e:
-                print(f"[fallback] {engine.__class__.__name__} ошибка: {e}")
+                logger.warning(
+                    "[fallback] %s ошибка: %s",
+                    engine.__class__.__name__,
+                    e,
+                )
                 continue
-        
+
+        logger.warning(
+            "Все поисковые движки не вернули результат (регион %s, запрос %r)",
+            region.value if region is not None else settings.region.value,
+            query[:120],
+        )
         return []

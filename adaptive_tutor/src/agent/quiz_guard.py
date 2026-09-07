@@ -185,13 +185,11 @@ def quiz_reject_text(blocked: bool) -> str:
     return QUIZ_BLOCKED_TEXT if blocked else QUIZ_REJECT_RETRY_TEXT
 
 
-def build_regen_instruction(rejected: list[dict]) -> str:
-    """Корректирующая инструкция для одной регенерации quiz.
+def reject_reasons(rejected: list[dict]) -> str:
+    """Строка уникальных причин отклонения (только reasons, без текста квиза).
 
-    Принимает список отклонений вида {"reasons": [...], "text": ...,
-    "answer_type": ...}. Использует ТОЛЬКО строки reasons: текст и ответ
-    отклонённого quiz в промпт не попадают (иначе ученику раскрылся бы
-    _correct_answer).
+    Текст и ответ отклонённого quiz в промпт не попадают — иначе ученику
+    раскрылся бы _correct_answer.
     """
     seen: list[str] = []
     for record in rejected:
@@ -199,8 +197,17 @@ def build_regen_instruction(rejected: list[dict]) -> str:
             reason = str(reason).strip()
             if reason and reason not in seen:
                 seen.append(reason)
-    reasons = "; ".join(seen) if seen else "структурная невалидность"
-    return _QUIZ_REGEN_HEAD.format(reasons=reasons)
+    return "; ".join(seen) if seen else "структурная невалидность"
+
+
+def build_regen_instruction(rejected: list[dict]) -> str:
+    """Корректирующая инструкция для одной регенерации quiz.
+
+    Принимает список отклонений вида {"reasons": [...], "text": ...,
+    "answer_type": ...}. Использует ТОЛЬКО строки reasons: текст и ответ
+    отклонённого quiz в промпт не попадают (см. reject_reasons).
+    """
+    return _QUIZ_REGEN_HEAD.format(reasons=reject_reasons(rejected))
 
 
 def next_reject_state(

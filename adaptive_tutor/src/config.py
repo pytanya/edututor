@@ -74,9 +74,14 @@ class Settings(BaseSettings):
         description="Пустой ответ (без tool_calls) считать ошибкой и пробовать следующий кандидат",
     )
     llm_max_tokens: int = Field(
-        default=4096,
+        default=6144,
         ge=256,
         description="Макс. токенов ответа planner (уроки/JSON-конверты могут быть длинными)",
+    )
+    llm_quiz_max_tokens: int = Field(
+        default=768,
+        ge=128,
+        description="Макс. токенов отдельного вызова generate_quiz (короткая карточка квиза)",
     )
     # Ролевые модели (переопределяют региональные дефолты get_models_for_region)
     llm_planner_model: str = Field(

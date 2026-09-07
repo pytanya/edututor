@@ -1,8 +1,11 @@
 import { useState, useMemo } from 'react'
 
+const MAX_VISIBLE = 5
+
 export default function SessionList({ sessions, currentId, onPick, onNew }) {
   const [query, setQuery] = useState('')
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
+  const [showAll, setShowAll] = useState(false)
 
   const filtered = useMemo(() => {
     if (!query.trim()) return sessions
@@ -13,6 +16,19 @@ export default function SessionList({ sessions, currentId, onPick, onNew }) {
     })
   }, [sessions, query])
 
+  const visible = useMemo(() => {
+    if (query.trim() || showAll) return filtered
+    return filtered.slice(0, MAX_VISIBLE)
+  }, [filtered, query, showAll])
+
+  const hiddenCount = !query.trim() && !showAll ? filtered.length - MAX_VISIBLE : 0
+  const count = sessions.length
+
+  const handleSearch = (e) => {
+    setQuery(e.target.value)
+    setShowAll(false)
+  }
+
   return (
     <div className="panel session-list">
       <div className="session-list-head">
@@ -22,7 +38,7 @@ export default function SessionList({ sessions, currentId, onPick, onNew }) {
           onClick={() => setCollapsed((v) => !v)}
           aria-expanded={!collapsed}
         >
-          <span className="collapsible-title">Сессии</span>
+          <span className="collapsible-title">Сессии{count > 0 ? ` (${count})` : ''}</span>
           {' '}
           <span className={`collapsible-arrow ${collapsed ? '' : 'open'}`}>▾</span>
         </button>
@@ -34,13 +50,14 @@ export default function SessionList({ sessions, currentId, onPick, onNew }) {
           <div className="session-list-search">
             <input
               type="text"
+              className="search-input"
               placeholder="Поиск сессий…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={handleSearch}
             />
           </div>
           <ul>
-            {filtered.map((s) => (
+            {visible.map((s) => (
               <li key={s.session_id}>
                 <button
                   className={s.session_id === currentId ? 'session active' : 'session'}
@@ -52,6 +69,15 @@ export default function SessionList({ sessions, currentId, onPick, onNew }) {
               </li>
             ))}
           </ul>
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              className="btn small session-list-more"
+              onClick={() => setShowAll(true)}
+            >
+              Показать все ({hiddenCount})
+            </button>
+          )}
           {filtered.length === 0 && sessions.length > 0 && (
             <p className="muted">Ничего не найдено.</p>
           )}

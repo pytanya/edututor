@@ -38,7 +38,6 @@ export default function StudentKGPanel({
   const [dueCount, setDueCount] = useState(0)
   const [activeFilter, setActiveFilter] = useState('all') // all | in_progress | not_studied | mastered
   const [query, setQuery] = useState('')
-  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     if (!studentId) return undefined
@@ -113,16 +112,6 @@ export default function StudentKGPanel({
   return (
     <section className="panel kg-panel">
       <div className="kg-head">
-        <button
-          type="button"
-          className="collapsible-header"
-          onClick={() => setCollapsed((v) => !v)}
-          aria-expanded={!collapsed}
-        >
-          <span className="collapsible-title">Мои знания</span>
-          {' '}
-          <span className={`collapsible-arrow ${collapsed ? '' : 'open'}`}>▾</span>
-        </button>
         {subject && <span className="kg-subject">· {subject}</span>}
         {onStartReview && dueCount > 0 && (
           <button type="button" className="btn review kg-review" disabled={busy} onClick={onStartReview}>
@@ -131,13 +120,11 @@ export default function StudentKGPanel({
         )}
       </div>
 
-      {!collapsed && (
-        <>
-          {error ? (
-            <div className="kg-error">{error}</div>
-          ) : !kg ? (
-            <div className="kg-loading">Загрузка…</div>
-          ) : (
+      {error ? (
+        <div className="kg-error">{error}</div>
+      ) : !kg ? (
+        <div className="kg-loading">Загрузка…</div>
+      ) : (
             <>
               <div className="kg-stats">
                 {statTiles.map(([label, value, color]) => (
@@ -232,8 +219,6 @@ export default function StudentKGPanel({
               )}
             </>
           )}
-        </>
-      )}
     </section>
   )
 }

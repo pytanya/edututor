@@ -38,7 +38,7 @@ from ..agent.quiz_guard import (
     quiz_problems,
     quiz_reject_text,
 )
-from ..agent.tools import ToolContext
+from ..agent.tools import ToolContext, generate_quiz_card
 from ..config import settings
 from ..export import csv_exporter
 from ..export import okf as okf_export
@@ -197,7 +197,12 @@ def build_runtime(rag: object | None = None) -> AgentRuntime:
     """
     llm = LLMClientFactory.get_client(settings.region)
     models = LLMClientFactory.get_models_for_region(settings.region)
-    tool_context = ToolContext(rag=rag, region=settings.region.value)
+    tool_context = ToolContext(
+        rag=rag,
+        region=settings.region.value,
+        llm=llm,
+        model=models.get("fast") or models.get("planner", ""),
+    )
     return AgentRuntime(
         llm=llm,
         models=models,
@@ -297,6 +302,97 @@ def _guard_quiz_envelopes(
         )
         out.append(ContentEnvelope(type="theory", text=fallback_text))
     return out, rejected
+
+
+def _tool_quiz_card(state: AgentGraphState) -> dict | None:
+    """Карточка квиза из результата инструмента generate_quiz (если был вызван).
+
+    ``state.tools_result`` хранит сериализованный вывод последнего вызова
+    инструмента вида {"status": "ok", "data": {question, options, ...}}.
+    """
+    raw = (state.tools_result or {}).get("generate_quiz")
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if parsed.get("status") != "ok":
+        return None
+    data = parsed.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _quiz_envelope_from_card(card: dict) -> ContentEnvelope | None:
+    """ContentEnvelope(quiz) из карточки generate_quiz (авторитетный источник).
+
+    Карточка возвращается коротким отдельным LLM-вызовом со строгой схемой —
+    её поля (в т.ч. _correct_answer) переносятся в payload без «пересказа»
+    моделью, которая в финальном конверте может исказить формулировку вопроса.
+    """
+    question = str(card.get("question") or "").strip()
+    if not question:
+        return None
+    answer_type = card.get("answer_type")
+    if answer_type not in ("single", "open"):
+        answer_type = "open"
+    payload: dict[str, Any] = {"answer_type": answer_type}
+    if answer_type == "single":
+        options = card.get("options")
+        payload["options"] = options if isinstance(options, list) else []
+    payload["_correct_answer"] = str(card.get("_correct_answer") or "")
+    difficulty = str(card.get("difficulty") or "medium").strip()
+    if difficulty not in {"easy", "medium", "hard"}:
+        difficulty = "medium"
+    return ContentEnvelope(
+        type="quiz", text=question, payload=payload, difficulty=difficulty
+    )
+
+
+async def _resolve_tool_quiz(
+    state: AgentGraphState,
+    runtime: AgentRuntime,
+    trace_id: str,
+    topic: str,
+    envelopes: list[ContentEnvelope],
+) -> list[ContentEnvelope]:
+    """Quiz-конверт хода строится из карточки инструмента, а не из конверта модели.
+
+    Когда агент в ходе вызывал ``generate_quiz``, карточка (короткий отдельный
+    LLM-вызов со строгой схемой) авторитетна: она заменяет quiz-конверт, который
+    модель могла собрать из неё с искажениями (вопрос-утверждение, раскрытый
+    ответ). Если карточка сама не прошла ``quiz_problems`` — делаем одну тихую
+    регенерацию тем же генератором карточки с причинами отклонения (только
+    reasons, без текста/ответа). Секрет в промпт не попадает.
+    """
+    card = _tool_quiz_card(state)
+    if not isinstance(card, dict):
+        return envelopes
+    env = _quiz_envelope_from_card(card)
+    problems = quiz_problems(env) if env is not None else ["пустая карточка квиза"]
+    if problems:
+        try:
+            card = await generate_quiz_card(
+                runtime.tool_context,
+                topic=str(topic or "").strip() or "пройденная тема",
+                difficulty=str(card.get("difficulty") or "medium"),
+                fix_hint="; ".join(problems),
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-soft: оставляем исходный ход
+            JsonlLogger(settings.log_file).log(
+                trace_id, "WARNING", "quiz.gen", status="regen_error",
+                error=str(exc)[:200],
+            )
+            return envelopes
+        env = _quiz_envelope_from_card(card)
+        if env is None:
+            return envelopes
+    replaced = [env if e.type.value == "quiz" else e for e in envelopes]
+    if not any(e.type.value == "quiz" for e in envelopes):
+        # Модель вызвала generate_quiz, но не оформила quiz-конверт — отдаём
+        # карточку отдельным блоком (намерение «дай квиз» очевидно).
+        replaced.append(env)
+    return replaced
 
 
 async def _regen_quiz(
@@ -1584,6 +1680,10 @@ async def _run_chat(
             envelopes = (
                 [ContentEnvelope(type="theory", text=raw_reply)] if raw_reply else []
             )
+    # Quiz из карточки generate_quiz авторитетен: модель могла исказить вопрос в
+    # финальном конверте (утверждение вместо вопроса, раскрытый ответ) — берём
+    # формулировку/эталон из короткого отдельного вызова инструмента.
+    envelopes = await _resolve_tool_quiz(state, runtime, trace_id, body.topic, envelopes)
     # Серверный контроль качества quiz: квиз с ответом в вопросе или битой
     # структурой заменяется на theory (см. _guard_quiz_envelopes); для таких
     # квизов session.last_quiz не фиксируется и рука бандита не засчитывается.

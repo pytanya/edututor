@@ -126,6 +126,13 @@ a { color: var(--green-strong); }
     overflow-y: auto;
     overscroll-behavior: contain;
   }
+  .right {
+    position: sticky;
+    top: 14px;
+    max-height: calc(100vh - 28px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
   .center {
     height: calc(100vh - 28px);
     position: sticky;
@@ -138,13 +145,6 @@ a { color: var(--green-strong); }
     flex: 1 1 auto;
     min-height: 0;
     height: auto;
-  }
-  .adaptive.panel {
-    position: sticky;
-    top: 14px;
-    max-height: calc(100vh - 28px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
 }
 
@@ -873,6 +873,11 @@ a { color: var(--green-strong); }
   border-color: rgba(47, 107, 79, 0.25);
   color: var(--green-strong);
   font-weight: 600;
+}
+
+.session-list-more {
+  margin-top: 6px;
+  width: 100%;
 }
 
 /* ---------- Helpers ---------- */
@@ -2001,6 +2006,11 @@ a { color: var(--green-strong); }
 
 .collapsible-body.open {
   grid-template-rows: 1fr;
+}
+
+/* В свёрнутом состоянии padding-top не должен создавать 8px-щель */
+.collapsible-body:not(.open) .collapsible-content {
+  padding-top: 0;
 }
 
 .collapsible-content {

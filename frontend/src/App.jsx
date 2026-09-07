@@ -16,6 +16,30 @@ import CollapsiblePanel from './components/CollapsiblePanel'
 
 const EMPTY_GRAPH = { nodes: [], edges: [], activeTopic: null }
 
+// Восстанавливает envelope агентского сообщения из сохранённой истории.
+// Для «старых» сессий конверт может не храниться отдельно, а content содержит
+// сырой JSON-конверт — распознаём и разбираем его (секретные поля payload
+// (_..., correct_answer) при этом выбрасываем, чтобы не просочились в DOM).
+function restoreEnvelope(m) {
+  if (m.envelope && typeof m.envelope === 'object') return m.envelope
+  const content = m.content
+  if (!content || typeof content !== 'string') return null
+  const t = content.trim()
+  if (!t.startsWith('{') || !/"type"\s*:/.test(t)) return null
+  try {
+    const parsed = JSON.parse(t)
+    if (!parsed || typeof parsed !== 'object' || !parsed.type) return null
+    if (parsed.payload && typeof parsed.payload === 'object') {
+      parsed.payload = Object.fromEntries(
+        Object.entries(parsed.payload).filter(([k]) => !k.startsWith('_') && k !== 'correct_answer'),
+      )
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
 function profileToCard(rec) {
   return {
     fields: [
@@ -44,6 +68,44 @@ export default function App() {
   const [intakeSkipped, setIntakeSkipped] = useState(false)
   const intakeRequired = !profile?.student_name && !intakeSkipped
   const abortRef = useRef(null)
+  const graphPollRef = useRef(null)
+  const graphPollTriesRef = useRef(0)
+  const prevBusyRef = useRef(false)
+
+  const stopGraphPoll = useCallback(() => {
+    if (graphPollRef.current) clearTimeout(graphPollRef.current)
+    graphPollRef.current = null
+    graphPollTriesRef.current = 0
+  }, [])
+
+  // Граф источника собирается фоном (LLM) и «доезжает» после закрытия SSE-потока
+  // первого хода. Доспрашиваем /graph, пока узлы не появятся — иначе «Созвездие»
+  // останется пустым до следующего сообщения ученика.
+  const pollGraphUntilReady = useCallback(() => {
+    const subj = current?.subject || ''
+    const grd = current?.grade || ''
+    if (!subj && !grd) return
+    const attempt = async () => {
+      try {
+        const d = await api.getGraph(studentIdRef.current, subj, grd)
+        if ((d?.nodes || []).length > 0) {
+          setGraph({ nodes: d.nodes || [], edges: d.edges || [], activeTopic: current?.topic || null })
+          stopGraphPoll()
+          return
+        }
+      } catch {
+        /* сеть/бэкенд — пробуем ещё раз ниже */
+      }
+      graphPollTriesRef.current += 1
+      if (graphPollTriesRef.current < 12 && current?.session_id) {
+        graphPollRef.current = setTimeout(attempt, 5000)
+      } else {
+        stopGraphPoll()
+      }
+    }
+    stopGraphPoll()
+    attempt()
+  }, [current, stopGraphPoll])
 
   const refreshStudent = useCallback(async () => {
     try {
@@ -78,7 +140,13 @@ export default function App() {
       const data = await api.history(session.session_id)
       const items = (data.messages || []).map((m, i) => {
         if (m.role === 'user') return { id: `h${i}`, kind: 'user', content: m.content }
-        return { id: `h${i}`, kind: 'agent', envelope: m.envelope || null, content: m.content }
+        const env = restoreEnvelope(m)
+        return {
+          id: `h${i}`,
+          kind: 'agent',
+          envelope: env,
+          content: env && typeof env.text === 'string' ? env.text : m.content,
+        }
       })
       setFeed({ items, lastStep: null, adaptive: session.adaptive || null, error: null })
       setCurrent(session)
@@ -212,7 +280,26 @@ export default function App() {
     loadSessions()
   }, [loadSessions])
 
-  useEffect(() => () => abortRef.current?.(), [])
+  // После завершения хода (busy true -> false) доспрашиваем граф, собранный
+  // фоном, пока не появятся узлы. Новый ход / размонтирование отменяют опрос.
+  useEffect(() => {
+    const wasBusy = prevBusyRef.current
+    prevBusyRef.current = busy
+    if (busy) {
+      stopGraphPoll()
+      return undefined
+    }
+    if (!wasBusy) return undefined
+    const subj = current?.subject || ''
+    const grd = current?.grade || ''
+    if (subj || grd) pollGraphUntilReady()
+    return undefined
+  }, [busy, current?.subject, current?.grade, pollGraphUntilReady, stopGraphPoll])
+
+  useEffect(() => () => {
+    stopGraphPoll()
+    abortRef.current?.()
+  }, [stopGraphPoll])
 
   return (
     <div className="layout">
@@ -246,13 +333,15 @@ export default function App() {
       </div>
       <main className="center">
         {(current?.subject || current?.grade || graph.nodes.length > 0) && (
-          <KnowledgeGraphPanel
-            nodes={graph.nodes}
-            edges={graph.edges}
-            activeTopic={graph.activeTopic}
-            onSelect={(node) => studyNext(node.title)}
-            sessionId={current?.session_id || ''}
-          />
+          <CollapsiblePanel title="Созвездие знаний" defaultOpen={true}>
+            <KnowledgeGraphPanel
+              nodes={graph.nodes}
+              edges={graph.edges}
+              activeTopic={graph.activeTopic}
+              onSelect={(node) => studyNext(node.title)}
+              sessionId={current?.session_id || ''}
+            />
+          </CollapsiblePanel>
         )}
         <Chat
           feed={feed}
@@ -268,7 +357,7 @@ export default function App() {
           defaultOpen={true}
           hideInnerHeader={true}
         >
-          <AdaptivePanel adaptive={feed.adaptive} onStudy={studyNext} busy={busy} />
+          <AdaptivePanel adaptive={feed.adaptive} onStudy={studyNext} onReview={startReview} busy={busy} />
         </CollapsiblePanel>
         <CollapsiblePanel
           title="Конспекты"
@@ -283,14 +372,16 @@ export default function App() {
             grade={current?.grade || ''}
           />
         </CollapsiblePanel>
-        <StudentKGPanel
-          studentId={studentId}
-          subject={current?.subject || ''}
-          onStartReview={startReview}
-          busy={busy}
-          reloadKey={kgReloadKey}
-          onStudy={studyNext}
-        />
+        <CollapsiblePanel title="Мои знания" defaultOpen={true}>
+          <StudentKGPanel
+            studentId={studentId}
+            subject={current?.subject || ''}
+            onStartReview={startReview}
+            busy={busy}
+            reloadKey={kgReloadKey}
+            onStudy={studyNext}
+          />
+        </CollapsiblePanel>
       </aside>
     </div>
   )

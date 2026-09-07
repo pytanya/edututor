@@ -371,6 +371,80 @@ npm run e2e   # Playwright: end-to-end сценарий на моках API (e2e
 E2E-тест не требует запущенного бэкенда: ответы `/chat/stream`, `/student`,
 `/chat/history` мокаются на уровне браузера.
 
+## Пример запроса и результата
+
+Пример реального хода обучения по теме «Сила тяжести» (ученик 7 класса).
+Запрос ученика:
+
+```text
+Изучаем тему: Сила тяжести. Объясни её и предложи задание.
+```
+
+Бэкенд получает его как `POST /chat/stream` с полями `message`, `student_id`,
+`topic`, `subject="физика"`, `grade="7 класс"` и отвечает SSE-потоком. Агентный
+цикл решает провижинить RAG по теме, найти факты в базе, затем выдать теорию и
+проверочный вопрос. Квиз при этом генерируется **отдельным инструментом**
+`generate_quiz` (короткий LLM-вызов с `max_tokens=768`), а не встраивается в
+огромный JSON основного ответа:
+
+```jsonc
+// SSE-события (сокращено): agent.step → agent.tool → agent.finalize → message → done
+event: agent.tool
+data: {"name": "generate_quiz", "status": "ok"}
+
+event: message
+data: {
+  "content": "Сила тяжести — сила, с которой Земля притягивает тело…\n\n$$F = mg$$",
+  "envelope": {
+    "type": "theory",
+    "text": "Сила тяжести — сила, с которой Земля притягивает тело…\n\n$$F = mg$$",
+    "payload": {"topic": "Сила тяжести"},
+    "difficulty": "medium"
+  }
+}
+
+event: message
+data: {
+  "content": "Как направлена сила тяжести, действующая на тело?",
+  "envelope": {
+    "type": "quiz",
+    "text": "Как направлена сила тяжести, действующая на тело?",
+    "payload": {
+      "answer_type": "single",
+      "options": ["вертикально вниз к центру Земли", "вверх", "горизонтально", "вдоль скорости"]
+    },
+    "difficulty": "easy"
+  }
+}
+
+event: done
+data: {"session_id": "ses_ab12cd34ef56", "trace_id": "trc_…", "steps": 3}
+```
+
+Секретный эталон `_correct_answer` хранится только на сервере (в `session.last_quiz`)
+и во фронтенд не уходит; ответ ученика «Ответ: вертикально вниз…» грейдится
+детерминированно. Формулы `$F = mg$` рендерятся на фронтенде через KaTeX.
+Полный JSONL-трейс того же хода — в `adaptive_tutor/docs/logging-example.md`.
+
+## Метрики успеха
+
+Система считается работающей правильно, стабильно и безопасно, если выполняются
+количественные критерии (измеряются по JSONL-логам `logs/agent.jsonl`):
+
+| Метрика | Целевой порог | Где считается |
+|---|---|---|
+| Корректность финального ответа (LLM-асессор `judge`) | ≥ 7/10 | `src/agent/critic.py` |
+| Валидность JSON-конвертов после цикла (без «сырого словаря» ученику) | 100 % ходов | `finalize` + `parse_content_envelopes` (`src/agent/loop.py`) |
+| Квизы, прошедшие серверный guard с первой попытки (`quiz.reject` отсутствует) | ≥ 90 % | `_guard_quiz_envelopes`, событие `quiz.reject` (`src/api/server.py`) |
+| Успешность вызовов инструментов (`status=ok / total`) | ≥ 95 % | `execute_tool` / `_observation_text` |
+| Доля ходов без обрыва JSON (`final.truncated`) | ≥ 95 % | `loop._log_truncated` |
+| Стоимость сессии (контроль `BudgetGuard`) | ≤ бюджет | `BudgetGuard` |
+| Доля валидных ответов по `OutputValidator` | 100 % ходов | `OutputValidator` |
+| Сквозные тесты | backend `pytest` + frontend `vitest` зелёные | `adaptive_tutor/tests`, `frontend/src/**/*.test.jsx` |
+
+Дополнительно: отсутствие секретов (`_correct_answer`, API-ключи) в логах и во
+фронтенде проверяется автотестами (`sanitize_envelope`, `scrub`).
+
 ## Тяжёлая зависимость: локальные эмбеддинги
 
 `rag_search` и провижининг по умолчанию используют локальные эмбеддинги через
@@ -396,8 +470,8 @@ E2E-тест не требует запущенного бэкенда: отве
 | Требование курса | Как закрыто в проекте | Где в коде |
 |------------------|-----------------------|-----------|
 | Агент с реальной задачей; ReAct-цикл, где модель сама выбирает следующий шаг | Узел `planner` по контексту решает: вызвать инструмент или дать финальный ответ; выбор трассируется в `AgentStep.reason_summary` и логах | `src/agent/loop.py` (`plan`, `run_agent`), `src/agent/prompts.py` |
-| Function-calling: инструменты со схемой и безопасным исполнением | `rag_search`/`web_search` описаны OpenAI-совместимыми JSON-схемами (`TOOL_SCHEMAS`); исполнение через `execute_tool` с таймаутом 15 c, retry ×2 и per-tool circuit breaker | `src/agent/tools.py` |
-| RAG-память и поведение при пустом результате | `rag_search` по `InMemoryVectorStore`; при отсутствии релевантного материала — fallback на `web_search` или честный ответ; база наполняется провижинингом | `src/rag/__init__.py`, `src/rag/provisioning.py`, `src/agent/tools.py` |
+| Function-calling: инструменты со схемой и безопасным исполнением | `rag_search`/`web_search`/`generate_quiz` описаны OpenAI-совместимыми JSON-схемами (`TOOL_SCHEMAS`); исполнение через `execute_tool` с таймаутом, retry ×2 и per-tool circuit breaker; `generate_quiz` делает отдельный короткий LLM-вызов (`llm_quiz_max_tokens`) | `src/agent/tools.py` |
+| RAG-память и поведение при пустом результате | `rag_search` по `InMemoryVectorStore`; при отсутствии релевантного материала модель получает заметку «База пуста → web_search» (не пустой массив); база наполняется провижинингом | `src/rag/__init__.py`, `src/rag/provisioning.py`, `src/agent/tools.py` |
 | Оркестрация: ветвление, циклы, условия остановки | LangGraph `StateGraph`: `planner → tools → planner … → final`; условные рёбра `should_continue`; остановка по `terminated`, лимиту шагов и `IterationLimiter`; глобальный таймаут в `run_agent` | `src/agent/loop.py` (`build_graph`, `should_continue`) |
 | Минимум 2 LLM-модели для разных ролей и 2 провайдера | Роли `planner`/`fast`/`judge`; регион RU → RouterAI, GLOBAL → OpenRouter | `src/llm/base.py`, `src/llm/router_ai.py`, `src/llm/openrouter.py` |
 | Безопасность | `CircuitBreaker` (LLM-вызовы), `IterationLimiter`, `BudgetGuard`, `OutputValidator`; входные данные валидируются Pydantic-схемами API | `src/safety/__init__.py`, `src/api/server.py` |

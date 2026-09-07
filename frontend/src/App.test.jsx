@@ -46,11 +46,14 @@ describe('<App/>', () => {
   })
 
   it('renders shell panels', async () => {
+    const user = userEvent.setup()
     render(<App />)
     expect(screen.getByRole('heading', { name: 'Новое занятие' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Адаптивность' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('квадратные уравнения')).toBeInTheDocument()
-    await screen.findByText('Пока пусто.')
+    // Список сессий свёрнут по умолчанию; разворачиваем и видим пустое состояние
+    await user.click(screen.getByRole('button', { name: /^Сессии/ }))
+    expect(await screen.findByText('Пока пусто.')).toBeInTheDocument()
   })
 
   it('lists server sessions and loads messages when one is picked', async () => {
@@ -67,6 +70,7 @@ describe('<App/>', () => {
       ],
     })
     render(<App />)
+    await user.click(await screen.findByRole('button', { name: /^Сессии/ }))
     const item = await screen.findByText('Квадратные уравнения')
     expect(item).toBeInTheDocument()
     await user.click(item)
@@ -183,7 +187,7 @@ describe('<App/> session lifecycle (баги привязки сессий)', ()
       )
       emit(0, { event: 'done', data: { session_id: 'ses_A' } })
     })
-    const reviewBtn = await screen.findByRole('button', { name: /Повторить \(3\)/ })
+    const reviewBtn = (await screen.findAllByRole('button', { name: /Повторить \(3\)/ }))[0]
 
     await user.click(reviewBtn)
     expect(bodies).toHaveLength(2)
@@ -239,6 +243,7 @@ describe('<App/> session lifecycle (баги привязки сессий)', ()
     api.history.mockRejectedValue(new Error('404: сессия не найдена'))
     render(<App />)
 
+    await user.click(await screen.findByRole('button', { name: /^Сессии/ }))
     await user.click(await screen.findByText('Старая тема'))
     await waitFor(() => expect(localStorage.getItem('edututor_session')).toBeNull())
 

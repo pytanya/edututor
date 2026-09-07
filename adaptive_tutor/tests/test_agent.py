@@ -1,5 +1,6 @@
 """Тесты агентного цикла и инструментов с фейковым LLM."""
 
+import json
 
 from src.agent.critic import Critic
 from src.agent.loop import (
@@ -363,3 +364,79 @@ async def test_on_event_raising_observer_does_not_break_run(monkeypatch):
 
     assert events, "события должны собираться до исключения наблюдателя"
     assert result.final_answer
+
+
+async def test_generate_quiz_records_budget_and_log(tmp_path):
+    """Вызов generate_quiz учитывается в бюджете сессии и пишется в JSONL."""
+    from src.observability.logger import JsonlLogger
+    from src.safety import BudgetGuard
+
+    log_file = tmp_path / "agent.jsonl"
+    logger = JsonlLogger(str(log_file))
+    budget = BudgetGuard()
+
+    class QuizLLM(LLMClient):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def chat(self, messages, model, temperature=0.7, max_tokens=1024,
+                       tools=None, tool_choice=None):
+            self.seen_messages = list(messages)
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "question": "Как направлена сила тяжести?",
+                        "answer_type": "single",
+                        "options": ["вертикально вниз", "вверх", "горизонтально", "по кругу"],
+                        "_correct_answer": "вертикально вниз",
+                    },
+                    ensure_ascii=False,
+                ),
+                model=model,
+                usage=TokenUsage(prompt_tokens=80, completion_tokens=40, cost_usd=0.001),
+                finish_reason="stop",
+            )
+
+        async def chat_stream(self, *a, **k):
+            yield ""
+
+        count_tokens = lambda self, text: len(text) // 4  # noqa: E731
+
+    llm = QuizLLM()
+    ctx = ToolContext(
+        rag=None,
+        region="GLOBAL",
+        llm=llm,
+        model="fast",
+        budget=budget,
+        logger=logger,
+        trace_id="trc_gq",
+    )
+    out = await execute_tool(
+        "generate_quiz",
+        {"topic": "Сила тяжести", "difficulty": "easy"},
+        ctx,
+        ToolFailureTracker(),
+    )
+    parsed = json.loads(out)
+    assert parsed["status"] == "ok"
+    assert parsed["data"]["_correct_answer"] == "вертикально вниз"
+    assert parsed["data"]["difficulty"] == "easy"
+    assert budget.calls == 1
+    assert budget.spent == 0.001
+
+    content = log_file.read_text(encoding="utf-8")
+    assert '"event": "quiz.gen"' in content
+    assert '"trace_id": "trc_gq"' in content
+    assert '"name": "generate_quiz"' in content
+    assert '"cost_usd": 0.001' in content
+    assert llm.seen_messages[0]["content"].startswith("Ты — составитель")
+
+
+async def test_generate_quiz_without_llm_fails_closed():
+    """Без подключённого LLM generate_quiz возвращает ошибку (fail-soft)."""
+    ctx = ToolContext(region="GLOBAL")
+    out = await execute_tool("generate_quiz", {"topic": "x"}, ctx, ToolFailureTracker())
+    parsed = json.loads(out)
+    assert parsed["status"] == "error"
+    assert "LLM не подключён" in parsed["error"]

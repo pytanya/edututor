@@ -1,5 +1,7 @@
 """Тесты HTTP-слоя API: без реальных ключей и сети (фейковый рантайм)."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -906,5 +908,74 @@ def test_valid_quiz_happy_path_unchanged(tmp_path, monkeypatch):
     assert session.quiz_reject_streak == 0
     assert session.quiz_blocked is False
     assert '"event": "quiz.regen"' not in log
+
+
+async def test_tool_quiz_card_overrides_distorted_model_envelope():
+    """Авторитетная карточка generate_quiz заменяет искажённый quiz-конверт модели."""
+    from src.api.server import _resolve_tool_quiz
+    from src.models.schemas import AgentGraphState, ContentEnvelope
+
+    card = {
+        "question": "Что является мерой инертности тела?",
+        "answer_type": "single",
+        "options": ["Масса", "Скорость", "Сила", "Ускорение"],
+        "_correct_answer": "Масса",
+        "difficulty": "medium",
+    }
+    state = AgentGraphState(
+        messages=[],
+        tools_result={
+            "generate_quiz": json.dumps({"status": "ok", "data": card}, ensure_ascii=False)
+        },
+    )
+    # Модель в финальном конверте превратила вопрос в утверждение с ответом.
+    distorted = ContentEnvelope(
+        type="quiz",
+        text="Мерой инертности тела является его масса.",
+        payload={
+            "answer_type": "single",
+            "options": ["Масса", "Скорость", "Сила", "Ускорение"],
+            "_correct_answer": "Масса",
+        },
+    )
+
+    class _Dummy:
+        tool_context = None
+
+    out = await _resolve_tool_quiz(state, _Dummy(), "trc_x", "инерция", [distorted])
+    assert len(out) == 1
+    assert out[0].type.value == "quiz"
+    assert out[0].text == "Что является мерой инертности тела?"
+    assert out[0].payload["_correct_answer"] == "Масса"
+
+
+async def test_tool_quiz_card_appended_when_model_missed_quiz():
+    """Модель вызвала generate_quiz, но не оформила quiz-конверт — карточка добавляется."""
+    from src.api.server import _resolve_tool_quiz
+    from src.models.schemas import AgentGraphState, ContentEnvelope
+
+    card = {
+        "question": "Какое слово является сказуемым в предложении «Солнце светит»?",
+        "answer_type": "single",
+        "options": ["светит", "Солнце", "ярко", "в предложении"],
+        "_correct_answer": "светит",
+        "difficulty": "easy",
+    }
+    state = AgentGraphState(
+        messages=[],
+        tools_result={
+            "generate_quiz": json.dumps({"status": "ok", "data": card}, ensure_ascii=False)
+        },
+    )
+
+    class _Dummy:
+        tool_context = None
+
+    out = await _resolve_tool_quiz(
+        state, _Dummy(), "trc_y", "тема",
+        [ContentEnvelope(type="theory", text="Теория готова.")],
+    )
+    assert [e.type.value for e in out] == ["theory", "quiz"]
+    assert out[1].payload["_correct_answer"] == "светит"
 
 

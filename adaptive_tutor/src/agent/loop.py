@@ -36,7 +36,7 @@ from .envelope import (
     salvage_truncated_envelope,
 )
 from .prompts import build_messages
-from .tools import TOOL_SCHEMAS, ToolContext, execute_tool
+from .tools import MAX_TOOL_RESULT_CHARS, TOOL_SCHEMAS, ToolContext, execute_tool
 
 NODE_PLAN = "planner"
 NODE_TOOLS = "tools"
@@ -58,6 +58,10 @@ _MAX_OBSERVATION_ITEMS = 8  # сколько позиций показывать
 _TRUNCATED_REFUSAL_TEXT = (
     "Не получилось сформировать ответ. Попробуйте ещё раз или задайте вопрос иначе."
 )
+
+# Повторный вызов после обрыва получает УВЕЛИЧЕННЫЙ лимит токенов (двойной от
+# базового, но не более капа) — иначе retry снова обрежется на том же месте.
+_RETRY_MAX_TOKENS_CAP = 8192
 
 # Инструкция для единственной retry-попытки: модель продолжает свой оборванный
 # JSON-конверт с места обрыва и компактно закрывает объект по схеме конверта.
@@ -98,6 +102,11 @@ class AgentRuntime:
         self.validator = validator or OutputValidator()
         self.critic = critic
         self.on_event = on_event
+        # Внутренние LLM-вызовы инструментов (generate_quiz) учитывают бюджет и
+        # пишутся в те же JSONL-логи, что и шаги агента.
+        if tool_context is not None:
+            tool_context.budget = tool_context.budget or self.budget
+            tool_context.logger = tool_context.logger or self.logger
 
     def _log(self, state: AgentGraphState, step: AgentStep):
         if self.logger:
@@ -378,7 +387,7 @@ class AgentRuntime:
                 messages=messages,
                 model=model,
                 temperature=0.4,
-                max_tokens=settings.llm_max_tokens,
+                max_tokens=min(settings.llm_max_tokens * 2, _RETRY_MAX_TOKENS_CAP),
             )
         except Exception:  # noqa: BLE001 — fail-soft: отказ вместо падения агента
             return None
@@ -580,6 +589,11 @@ def _observation_text(name: str, output: str) -> str:
         rest = len(data) - _MAX_OBSERVATION_ITEMS
         if rest > 0:
             lines.append(f"... и ещё {rest}.")
+    elif isinstance(data, dict):
+        # Инструменты, возвращающие структуру (например, карточку квиза от
+        # generate_quiz), показываем целиком читабельным JSON, чтобы модель могла
+        # дословно перенести поля в финальный конверт.
+        lines.append(json.dumps(data, ensure_ascii=False)[:MAX_TOOL_RESULT_CHARS])
     else:
         lines.append(_truncate(str(data)))
     return "\n".join(lines)
@@ -602,6 +616,10 @@ def _merge_tool_output(
     if name == "rag_search":
         for item in data:
             if not isinstance(item, dict) or not item.get("text"):
+                continue
+            if item.get("note"):
+                # Служебная заметка «база пуста» — это НЕ факт-свидетельство для
+                # критика, показываем её только модели в наблюдении.
                 continue
             rag_context.append(
                 {
@@ -693,6 +711,8 @@ async def run_agent(
 ) -> AgentGraphState:
     """Точка входа: запускает агентный цикл с лимитами времени."""
     runtime.trace_id = trace_id or TraceContext.current() or JsonlLogger.new_trace_id()
+    if runtime.tool_context is not None:
+        runtime.tool_context.trace_id = runtime.trace_id
     graph = build_graph(runtime)
     profile = student_profile or {}
     initial = AgentGraphState(
