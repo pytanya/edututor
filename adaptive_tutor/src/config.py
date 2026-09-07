@@ -1,3 +1,13 @@
+import os
+
+# LangSmith / LangChain tracing выключен: проекта нет LANGSMITH_API_KEY, а
+# langgraph тянет langchain_core/langsmith транзитивно. Флаги выставляются ДО
+# первого импорта langchain*, чтобы SDK не инициализировал трейсер, не пытался
+# слать трассы и не требовал ключ.
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
+os.environ.setdefault("LANGSMITH_TRACING", "false")
+os.environ.setdefault("LANGCHAIN_TRACING", "false")
+
 from enum import StrEnum
 
 from pydantic import Field
