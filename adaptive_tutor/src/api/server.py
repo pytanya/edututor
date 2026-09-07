@@ -445,6 +445,13 @@ _HINT_ANSWER_NOTE = (
 )
 _MAX_HINTS_IN_A_ROW = 2
 
+_PRACTICE_ANSWER_NOTE = (
+    "Если последнее сообщение было заданием (practice) и текущее сообщение ученика — "
+    "это ответ на него: СНАЧАЛА оцени ответ конвертом evaluation (правильно/неправильно "
+    "+ фидбек), и только затем предложи следующий шаг. НЕ начинай новый quiz, пока ответ "
+    "на задание не оценён. Если ученик задал новый вопрос — просто ответь на него."
+)
+
 
 def _gen_id(prefix: str) -> str:
     import uuid
@@ -1581,6 +1588,14 @@ async def _run_chat(
         # выдаёт quiz — только practice/theory (заметка уходит в контекст).
         if session.quiz_blocked:
             context.append({"role": "system", "content": QUIZ_BLOCKED_NOTE})
+        # Ответ на practice-задание: без «висящего» квиза и после задачи агента
+        # требуем порядок «сначала оценка ответа, потом следующий шаг» — иначе
+        # планировщик может сразу уйти в generate_quiz, не оценив ответ ученика.
+        if (
+            session.last_quiz is None
+            and _latest_assistant_kind(app.state.sessions, session_id) == "practice"
+        ):
+            context.append({"role": "system", "content": _PRACTICE_ANSWER_NOTE})
         # LinUCB (Этап 5): советник сложности — рекомендация модели (не диктат).
         # Совет добавляем только если нет «висящего» задания (иначе ход — это
         # ответ ученика, и менять целевую сложность не нужно).

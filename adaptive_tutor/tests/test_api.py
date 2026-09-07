@@ -99,6 +99,51 @@ class FakeHintLLM(LLMClient):
         yield ""
 
 
+class FixedEnvelopeLLM(LLMClient):
+    """Всегда отвечает конвертом заданного типа; фиксирует приход заметок.
+
+    ``saw_answer_note`` — была ли в system-сообщениях заметка про «оцени ответ»
+    (_PRACTICE_ANSWER_NOTE) для ответа на practice-задание.
+    """
+
+    def __init__(self, kind: str):
+        self.kind = kind
+        self.saw_answer_note = False
+
+    async def chat(
+        self, messages, model, temperature=0.7, max_tokens=1024, tools=None, tool_choice=None
+    ):
+        note = any(
+            isinstance(m.get("content"), str) and "оцени ответ" in m["content"]
+            for m in messages
+            if m.get("role") == "system"
+        )
+        self.saw_answer_note = self.saw_answer_note or note
+        text = {
+            "practice": "Приведи пример звукового явления.",
+            "theory": "Звук — это колебания воздуха.",
+            "evaluation": "Верно! Звук — это колебания воздуха.",
+        }[self.kind]
+        payload = (
+            {"topic": "звук"}
+            if self.kind == "theory"
+            else {"correct": True, "feedback": "Верно", "knowledge_delta": 0.2}
+            if self.kind == "evaluation"
+            else {"task_ref": "..."}
+        )
+        return LLMResponse(
+            content=json.dumps(
+                {"type": self.kind, "text": text, "payload": payload, "difficulty": "medium"}
+            ),
+            model=model,
+            usage=TokenUsage(prompt_tokens=5, completion_tokens=5),
+            finish_reason="stop",
+        )
+
+    async def chat_stream(self, *args, **kwargs):
+        yield ""
+
+
 def _fake_runtime_factory():
     """Собирает AgentRuntime на фейковых LLM (без сети и API-ключей)."""
     return AgentRuntime(
@@ -359,6 +404,69 @@ def test_hint_request_does_not_invoke_generate_quiz(tmp_path):
     store.close()
     # Планировщик ни разу не получал tool-схемы => не мог вызвать generate_quiz.
     assert llm.saw_tools and not any(llm.saw_tools)
+
+
+def _chat_payload(session_id: str, message: str) -> dict:
+    return {
+        "message": message,
+        "session_id": session_id,
+        "student_id": "stu_fix",
+        "topic": "звук",
+        "subject": "физика",
+        "grade": "7",
+    }
+
+
+def _app_for_llm(tmp_path, llm: FixedEnvelopeLLM):
+    store = StudentStore(str(tmp_path / "students.db"))
+
+    def factory():
+        return AgentRuntime(
+            llm=llm,
+            models={"planner": "test", "fast": "test", "judge": "test"},
+            tool_context=ToolContext(region="GLOBAL"),
+            critic=Critic(llm=FakeJudgeLLM(), model="judge"),
+        )
+
+    app = create_app(runtime_factory=factory, student_store=store)
+    return app, store
+
+
+def test_practice_answer_gets_evaluation_note(tmp_path):
+    """Ответ на practice-задание получает заметку «сначала оцени ответ»."""
+    llm = FixedEnvelopeLLM("practice")
+    app, store = _app_for_llm(tmp_path, llm)
+    try:
+        with TestClient(app) as c:
+            resp = c.post("/chat", json=_chat_payload("ses_practice_note", "Изучаем тему звук"))
+            assert resp.status_code == 200
+            hist = c.get("/chat/history/ses_practice_note").json()["messages"]
+            last_kind = next(m["kind"] for m in reversed(hist) if m.get("role") == "assistant")
+            assert last_kind == "practice"
+            assert not llm.saw_answer_note  # на старте заметки нет
+
+            resp = c.post("/chat", json=_chat_payload("ses_practice_note", "колонка играет музыку"))
+            assert resp.status_code == 200
+        assert llm.saw_answer_note  # ответ на задание => заметка подставлена
+    finally:
+        store.close()
+
+
+def test_theory_followup_has_no_evaluation_note(tmp_path):
+    """Обычный вопрос после theory НЕ получает заметку про оценку ответа."""
+    llm = FixedEnvelopeLLM("theory")
+    app, store = _app_for_llm(tmp_path, llm)
+    try:
+        with TestClient(app) as c:
+            resp = c.post("/chat", json=_chat_payload("ses_theory_q", "Изучаем тему звук"))
+            assert resp.status_code == 200
+            resp = c.post(
+                "/chat", json=_chat_payload("ses_theory_q", "а почему воздух колеблется?")
+            )
+            assert resp.status_code == 200
+        assert not llm.saw_answer_note
+    finally:
+        store.close()
 
 
 # --- Knowledge provisioning ---
