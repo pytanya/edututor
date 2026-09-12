@@ -48,4 +48,42 @@ describe('parseBlocks', () => {
     expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'paragraph'])
     expect(blocks[0].text.map((t) => t.type)).toEqual(['text'])
   })
+
+  it('parses fenced mermaid code block', () => {
+    const blocks = parseBlocks('Текст до\n\n```mermaid\ngraph TD\n  A-->B\n```\n\nТекст после')
+    expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'code', 'paragraph'])
+    expect(blocks[1].lang).toBe('mermaid')
+    expect(blocks[1].content).toBe('graph TD\n  A-->B')
+  })
+
+  it('parses generic fenced code block', () => {
+    const blocks = parseBlocks('Пример:\n\n```js\nconst x = 1\n```')
+    expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'code'])
+    expect(blocks[1].lang).toBe('js')
+    expect(blocks[1].content).toBe('const x = 1')
+  })
+
+  it('handles unclosed fenced code block', () => {
+    const blocks = parseBlocks('```mermaid\ngraph TD\n  A-->B')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].type).toBe('code')
+    expect(blocks[0].lang).toBe('mermaid')
+    expect(blocks[0].content).toBe('graph TD\n  A-->B')
+  })
+
+  it('parses code block without language tag', () => {
+    const blocks = parseBlocks('```\nhello\nworld\n```')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].type).toBe('code')
+    expect(blocks[0].lang).toBe('')
+    expect(blocks[0].content).toBe('hello\nworld')
+  })
+
+  it('mixes mermaid blocks with other content', () => {
+    const text = '# Title\n\n```mermaid\npie\n  "A": 50\n  "B": 50\n```\n\n- item 1\n- item 2'
+    const blocks = parseBlocks(text)
+    expect(blocks.map((b) => b.type)).toEqual(['heading', 'code', 'list'])
+    expect(blocks[1].lang).toBe('mermaid')
+  })
 })
+

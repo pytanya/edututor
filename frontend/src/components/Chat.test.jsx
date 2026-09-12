@@ -3,10 +3,10 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Chat, { feedReducer } from './Chat'
 
-const emptyFeed = { items: [], lastStep: null, adaptive: null, error: null }
+const emptyFeed = { items: [], steps: [], adaptive: null, error: null }
 
 function feedWith(items) {
-  return { items, lastStep: null, adaptive: null, error: null }
+  return { items, steps: [], adaptive: null, error: null }
 }
 
 describe('<Chat/>', () => {
@@ -72,7 +72,7 @@ describe('<Chat/>', () => {
         { id: 'u1', kind: 'user', content: 'Расскажи про Виета' },
         { id: 'a1', kind: 'agent', envelope: { type: 'theory', text: 'Теорема Виета', payload: {} }, content: '' },
       ],
-      lastStep: null,
+      steps: [],
       adaptive: null,
       error: null,
     }

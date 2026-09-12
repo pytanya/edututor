@@ -47,6 +47,14 @@ STATUS_TOOLS = "tools"
 STATUS_FINAL = "final"
 STATUS_STOP = "stop"
 
+# Человекочитаемые описания инструментов для SSE-событий на фронтенде
+_TOOL_REASON_MAP: dict[str, str] = {
+    "rag_search": "Ищу в базе знаний…",
+    "web_search": "Ищу в интернете…",
+    "generate_quiz": "Генерирую проверочный вопрос…",
+}
+_FINAL_REASON = "Формирую ответ…"
+
 # Лимиты на размер контекста, возвращаемого инструментами
 _MAX_CONTEXT_SNIPPETS = 10  # максимум сниппетов RAG в rag_context
 _SNIPPET_CHARS = 600  # максимум символов одного сниппета
@@ -134,7 +142,7 @@ class AgentRuntime:
                     "model": model,
                     "tool": None,
                     "status": "error",
-                    "reason": "circuit_breaker",
+                    "reason": "Переключаюсь на запасную модель…",
                     "step": len(state.steps),
                 },
             )
@@ -149,7 +157,7 @@ class AgentRuntime:
                     "model": model,
                     "tool": None,
                     "status": "error",
-                    "reason": "budget",
+                    "reason": "Бюджет сессии исчерпан",
                     "step": len(state.steps),
                 },
             )
@@ -174,7 +182,7 @@ class AgentRuntime:
                     "model": model,
                     "tool": None,
                     "status": "error",
-                    "reason": "llm_error",
+                    "reason": "Ошибка модели, пробую ещё…",
                     "step": len(state.steps),
                 },
             )
@@ -210,6 +218,7 @@ class AgentRuntime:
                     "action": "tool",
                     "model": resp.model,
                     "tool": first.name,
+                    "reason": _TOOL_REASON_MAP.get(first.name, f"Инструмент: {first.name}"),
                     "status": "ok",
                     "step": len(state.steps),
                 },
@@ -230,6 +239,7 @@ class AgentRuntime:
                 "action": "final",
                 "model": resp.model,
                 "tool": None,
+                "reason": _FINAL_REASON,
                 "status": "ok",
                 "step": len(state.steps),
             },

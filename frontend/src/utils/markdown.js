@@ -43,6 +43,9 @@ export function parseBlocks(text) {
   const blocks = []
   const paraLines = []
   let list = null
+  // Fenced code block state (```mermaid, ```js, etc.)
+  let fenceLines = null
+  let fenceLang = ''
 
   const flushPara = () => {
     if (paraLines.length > 0) {
@@ -63,6 +66,28 @@ export function parseBlocks(text) {
 
   for (const raw of String(text || '').split('\n')) {
     const line = raw.trim()
+
+    // Inside a fenced code block — accumulate or close
+    if (fenceLines !== null) {
+      if (line === '```') {
+        blocks.push({ type: 'code', lang: fenceLang, content: fenceLines.join('\n') })
+        fenceLines = null
+        fenceLang = ''
+      } else {
+        fenceLines.push(raw)  // preserve original indentation inside fence
+      }
+      continue
+    }
+
+    // Opening fence: ```mermaid, ```js, etc.
+    const fenceMatch = line.match(/^```(\w*)$/)
+    if (fenceMatch) {
+      flush()
+      fenceLines = []
+      fenceLang = fenceMatch[1] || ''
+      continue
+    }
+
     if (!line) {
       flush()
       continue
@@ -88,6 +113,11 @@ export function parseBlocks(text) {
     }
     paraLines.push(line)
   }
+  // If fence was never closed, emit remaining as code block anyway
+  if (fenceLines !== null) {
+    blocks.push({ type: 'code', lang: fenceLang, content: fenceLines.join('\n') })
+  }
   flush()
   return blocks
 }
+

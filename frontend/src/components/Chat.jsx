@@ -11,16 +11,22 @@ import StepIndicator from './StepIndicator'
 export const feedReducer = (feed, event) => {
   const { event: name, data } = event
   if (name === 'agent.step') {
-    return { ...feed, lastStep: data }
+    const step = { tool: data.tool, reason: data.reason || '', action: data.action, status: data.status }
+    return { ...feed, steps: [...(feed.steps || []), step] }
   }
   if (name === 'agent.tool') {
-    return { ...feed, lastStep: { ...feed.lastStep, tool: data.name, status: data.status } }
+    // Обновляем статус последнего шага (tool execution result)
+    const steps = [...(feed.steps || [])]
+    if (steps.length > 0) {
+      steps[steps.length - 1] = { ...steps[steps.length - 1], status: data.status }
+    }
+    return { ...feed, steps }
   }
   if (name === 'message') {
     const envelope = data.envelope
     return {
       ...feed,
-      lastStep: null,
+      steps: [],
       adaptive: data.adaptive || feed.adaptive,
       items: [
         ...feed.items,
@@ -29,7 +35,7 @@ export const feedReducer = (feed, event) => {
     }
   }
   if (name === 'error') {
-    return { ...feed, lastStep: null, error: data.message || 'Ошибка' }
+    return { ...feed, steps: [], error: data.message || 'Ошибка' }
   }
   if (name === 'system') {
     if (data.kind === 'mastery.gate') {
@@ -149,7 +155,7 @@ export default function Chat({ feed, busy, onSendUser, onDismissBanner = () => {
             </div>
           )
         })}
-        {busy && <StepIndicator lastStep={feed.lastStep} />}
+        {busy && <StepIndicator steps={feed.steps || []} />}
         {feed.error && <div className="bubble error">⚠️ {feed.error}</div>}
       </div>
       <form

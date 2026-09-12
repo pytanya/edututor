@@ -393,6 +393,61 @@ a { color: var(--green-strong); }
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* Mini-log mode */
+.step-log {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 6px 10px;
+}
+
+.step-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  animation: step-fade-in 0.3s ease;
+}
+
+.step-done {
+  color: var(--muted);
+}
+
+.step-done .step-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--line);
+}
+
+.step-active {
+  color: var(--green-strong);
+  font-weight: 500;
+}
+
+.step-active .step-icon {
+  animation: step-pulse 1.5s infinite ease-in-out;
+}
+
+.step-error {
+  color: var(--err);
+}
+
+.step-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+@keyframes step-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes step-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+
 /* ---------- Content blocks ---------- */
 
 .block {
@@ -2161,3 +2216,104 @@ a { color: var(--green-strong); }
   padding: 6px 10px;
   font-size: 12.5px;
 }
+
+/* ============================================================
+   Visual Blocks (Mermaid, Function Plot, SVG)
+   ============================================================ */
+.visuals-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.visual-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--card);
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.visual-block:hover {
+  box-shadow: 0 2px 8px rgba(33, 40, 46, 0.08);
+}
+
+.visual-caption {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+  font-style: italic;
+}
+
+.visual-error {
+  padding: 8px 12px;
+  background: var(--red-soft);
+  color: var(--err);
+  border-radius: 8px;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+
+/* Mermaid */
+.visual-mermaid .mermaid-container {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.visual-mermaid .mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Function Plot */
+.visual-plot .plot-container {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.visual-plot .plot-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.visual-plot .plot-container .function-plot {
+  font-family: var(--font-mono);
+}
+
+/* SVG illustrations */
+.visual-svg .svg-container {
+  display: flex;
+  justify-content: center;
+}
+
+.visual-svg .svg-container svg {
+  max-width: 100%;
+  height: auto;
+  max-height: 400px;
+}
+
+/* Fenced code blocks (non-mermaid) */
+.latex-body pre {
+  background: var(--paper-deep);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.latex-body pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  font-size: inherit;
+}
+

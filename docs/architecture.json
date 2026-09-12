@@ -55,8 +55,8 @@
     {
       "id": "llm",
       "type": "external",
-      "label": "OpenRouter",
-      "sublabel": "LLM Provider",
+      "label": "LLM Gateway",
+      "sublabel": "RouterAI · OpenRouter",
       "pos": [740, 90],
       "size": [140, 70]
     },
@@ -72,7 +72,7 @@
       "id": "student-store",
       "type": "database",
       "label": "Student Store",
-      "sublabel": "JSON data/",
+      "sublabel": "SQLite students.db",
       "pos": [500, 540],
       "size": [150, 70]
     },
@@ -247,7 +247,7 @@
       "dot": "amber",
       "title": "Внешние сервисы",
       "items": [
-        "OpenRouter API — маршрутизация LLM-запросов",
+        "RouterAI (RU) / OpenRouter (GLOBAL) — маршрутизация LLM-запросов",
         "Web Search — DuckDuckGo, Tavily, Yandex",
         "Все вызовы через safety guard и circuit breaker"
       ]

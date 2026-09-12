@@ -60,6 +60,29 @@ class ContentType(StrEnum):
     EVALUATION = "evaluation"
 
 
+class VisualKind(StrEnum):
+    """Тип визуализации в иллюстрации."""
+    MERMAID = "mermaid"
+    FUNCTION_PLOT = "function_plot"
+    SVG = "svg"
+    CHART = "chart"
+
+
+class VisualItem(BaseModel):
+    """Один элемент визуализации, встраиваемый в payload.visuals конверта."""
+    kind: VisualKind
+    code: str = Field(default="", description="Mermaid-код или SVG-разметка")
+    expressions: list[str] = Field(default_factory=list, description="Формулы для function_plot")
+    x_range: list[float] = Field(default_factory=lambda: [-10, 10], description="Диапазон X")
+    y_range: list[float] = Field(default_factory=lambda: [-10, 10], description="Диапазон Y")
+    caption: str = Field(default="", description="Подпись к иллюстрации")
+    chart_type: Literal["bar", "pie", "line", ""] = Field(
+        default="", description="Тип диаграммы (для kind=chart)"
+    )
+    labels: list[str] = Field(default_factory=list, description="Метки для chart")
+    data: list[float] = Field(default_factory=list, description="Данные для chart")
+
+
 class ContentEnvelope(BaseModel):
     """Типизированный ответ агента (Подход A, конверт в цикле)."""
     v: int = 1

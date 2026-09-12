@@ -25,5 +25,10 @@
     "react-dom": "^19.2.8",
     "vite": "^8.2.1",
     "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.15",
+    "function-plot": "^1.25.4",
+    "mermaid": "^12.0.0"
   }
 }

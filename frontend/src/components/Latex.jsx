@@ -1,5 +1,6 @@
 import { parseBlocks, parseInline } from '../utils/markdown'
 import { renderLatex, escapeHtml } from '../utils/latex'
+import MermaidDiagram from './MermaidDiagram'
 
 function Inline({ tokens }) {
   return tokens.map((tok, i) => {
@@ -47,8 +48,15 @@ export default function Latex({ text }) {
         if (block.type === 'quote') {
           return <blockquote key={i}><Inline tokens={block.text} /></blockquote>
         }
+        if (block.type === 'code') {
+          if (block.lang === 'mermaid') {
+            return <MermaidDiagram key={i} code={block.content} />
+          }
+          return <pre key={i}><code className={block.lang ? `lang-${block.lang}` : ''}>{block.content}</code></pre>
+        }
         return <p key={i}><Inline tokens={block.text} /></p>
       })}
     </div>
   )
 }
+

@@ -51,7 +51,7 @@ function profileToCard(rec) {
 }
 
 export default function App() {
-  const [feed, setFeed] = useState({ items: [], lastStep: null, adaptive: null, error: null })
+  const [feed, setFeed] = useState({ items: [], steps: [], adaptive: null, error: null })
   const [busy, setBusy] = useState(false)
   const [sessions, setSessions] = useState([])
   const [current, setCurrent] = useState(null) // {session_id, topic, subject, grade}
@@ -148,12 +148,12 @@ export default function App() {
           content: env && typeof env.text === 'string' ? env.text : m.content,
         }
       })
-      setFeed({ items, lastStep: null, adaptive: session.adaptive || null, error: null })
+      setFeed({ items, steps: [], adaptive: session.adaptive || null, error: null })
       setCurrent(session)
       setSessionId(session.session_id)
     } catch {
       clearSession()
-      setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+      setFeed({ items: [], steps: [], adaptive: null, error: null })
       setCurrent({ ...session, session_id: '', topic: session.topic })
     }
   }, [])
@@ -219,7 +219,7 @@ export default function App() {
     clearSession()
     const session = { session_id: '', topic: meta.topic, subject: meta.subject, grade: meta.grade }
     setCurrent(session)
-    setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+    setFeed({ items: [], steps: [], adaptive: null, error: null })
     runTurn(`Изучаем тему: ${meta.topic}. Объясни её и предложи задание.`, 'message', { ...meta, session_id: '' })
   }, [runTurn])
 
@@ -227,7 +227,7 @@ export default function App() {
     clearSession()
     const session = { session_id: '', topic, subject: current?.subject || '', grade: current?.grade || '' }
     setCurrent(session)
-    setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+    setFeed({ items: [], steps: [], adaptive: null, error: null })
     runTurn(`Расскажи про ${topic}`, 'message', { topic, subject: session.subject, grade: session.grade, session_id: '' })
   }, [runTurn, current])
 
@@ -327,7 +327,7 @@ export default function App() {
           clearSession()
           setCurrent(null)
           setGraph(EMPTY_GRAPH)
-          setFeed({ items: [], lastStep: null, adaptive: null, error: null })
+          setFeed({ items: [], steps: [], adaptive: null, error: null })
           loadSessions()
         }} onPick={loadHistory} />
       </div>
