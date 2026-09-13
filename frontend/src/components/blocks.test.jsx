@@ -36,6 +36,19 @@ describe('content blocks', () => {
     expect(second).toHaveTextContent('Б')
   })
 
+  it('QuizBlock single disables all buttons after answer', async () => {
+    const send = vi.fn()
+    render(<QuizBlock envelope={quizSingle} onSend={send} />)
+    const buttons = screen.getAllByRole('button')
+    await userEvent.click(buttons[1])
+    expect(send).toHaveBeenCalledTimes(1)
+    // After first click, all buttons are disabled — second click is no-op.
+    await userEvent.click(buttons[0])
+    await userEvent.click(buttons[1])
+    expect(send).toHaveBeenCalledTimes(1)
+    buttons.forEach((b) => expect(b).toBeDisabled())
+  })
+
   it('QuizBlock open submits typed answer', async () => {
     const send = vi.fn()
     render(<QuizBlock envelope={quizOpen} onSend={send} />)

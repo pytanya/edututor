@@ -705,6 +705,16 @@ a { color: var(--green-strong); }
   background: var(--green-soft);
 }
 
+.quiz-option.chosen {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+
+.quiz-option:disabled:not(.chosen) {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .quiz-option-letter {
   flex: none;
   display: inline-flex;

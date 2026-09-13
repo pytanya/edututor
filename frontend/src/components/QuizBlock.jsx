@@ -6,6 +6,8 @@ const DIFF_LABEL = { easy: 'лёгкий', medium: 'средний', hard: 'сл
 
 export default function QuizBlock({ envelope, onSend }) {
   const [open, setOpen] = useState('')
+  // Индекс выбранного варианта (single) или true (open) — после отправки кнопки блокируются.
+  const [sent, setSent] = useState(null)
   const payload = envelope?.payload || {}
   const options = payload.answer_type === 'single' ? payload.options || [] : []
   const difficulty = envelope?.difficulty
@@ -26,6 +28,11 @@ export default function QuizBlock({ envelope, onSend }) {
     </div>
   )
   if (payload.answer_type === 'open' || options.length === 0) {
+    const handleOpen = () => {
+      if (sent) return
+      setSent(true)
+      onSend(`Ответ: ${open.trim()}`)
+    }
     return (
       <div className="block quiz">
         {header}
@@ -33,8 +40,8 @@ export default function QuizBlock({ envelope, onSend }) {
           <Latex text={envelope?.text || ''} />
         </div>
         <div className="quiz-open">
-          <input value={open} onChange={(e) => setOpen(e.target.value)} placeholder="Ваш ответ…" />
-          <button className="btn" disabled={!open.trim()} onClick={() => onSend(`Ответ: ${open.trim()}`)}>Ответить</button>
+          <input value={open} onChange={(e) => setOpen(e.target.value)} placeholder="Ваш ответ…" disabled={!!sent} />
+          <button className="btn" disabled={!open.trim() || !!sent} onClick={handleOpen}>Ответить</button>
         </div>
       </div>
     )
@@ -48,13 +55,15 @@ export default function QuizBlock({ envelope, onSend }) {
       <div className="quiz-options">
         {options.map((opt, i) => {
           const letter = LETTERS[i] || String(i + 1)
+          const chosen = sent === i
           return (
             <button
               key={`${i}-${opt}`}
               type="button"
-              className="quiz-option"
+              className={`quiz-option${chosen ? ' chosen' : ''}`}
               aria-label={`${letter}. ${opt}`}
-              onClick={() => onSend(`Ответ: ${opt}`)}
+              disabled={sent != null}
+              onClick={() => { setSent(i); onSend(`Ответ: ${opt}`) }}
             >
               <span className="quiz-option-letter" aria-hidden="true">{letter}</span>
               <span className="quiz-option-text">
