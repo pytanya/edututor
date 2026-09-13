@@ -8,6 +8,11 @@ CP1251-mojibake-эвристика и проверки «реальная тем
 import html
 import re
 
+# Кириллица (все буквы, включая Ё/ё) — для проверки «не кракозябра ли это».
+# ВАЖНО: литерал "А-Яа-яЁё" НЕ является диапазоном — это строка из 8 символов,
+# поэтому используем настоящий regex-диапазон.
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04ff]")
+
 # Regex для обнаружения URL-адресов в строке (фильтрация шумовых узлов)
 _URL_PATTERN = re.compile(
     r"https?://|"                           # http:// или https://
@@ -32,7 +37,7 @@ def _try_fix_mojibake(text: str) -> str:
 
     # Проверяем наличие «кракозябр» (UTF-8 прочитан как CP1251)
     # Кракозябры: символы вне ASCII и вне кириллицы, но с ord > 127
-    has_mojibake = any(ord(c) > 127 and c not in "А-Яа-яЁё" for c in text)
+    has_mojibake = any(ord(c) > 127 and not _CYRILLIC_RE.fullmatch(c) for c in text)
 
     if not has_mojibake:
         return text  # текст уже в UTF-8, не трогаем
@@ -47,7 +52,7 @@ def _try_fix_mojibake(text: str) -> str:
     # Пробуем декодировать как CP1251 → UTF-8 (обратная операция mojibake)
     try:
         # Проверяем наличие «кракозябр» (UTF-8 прочитан как CP1251)
-        if any(ord(c) > 127 and c not in "А-Яа-яЁё" for c in text):
+        if any(ord(c) > 127 and not _CYRILLIC_RE.fullmatch(c) for c in text):
             # Пробуем decode as CP1251, encode as UTF-8
             fixed = text.encode("cp1251", errors="ignore").decode("utf-8", errors="ignore")
             # Если результат читаемый (больше 50% кириллицы) — используем

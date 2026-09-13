@@ -65,6 +65,25 @@ def test_junk_filters():
     assert clean_title("  Сила  — ") == "Сила  — ".strip(" *#-–—")  # без mojibake не трогает
 
 
+def test_clean_title_does_not_mangle_normal_cyrillic():
+    """Регрессия: 'А-Яа-яЁё' в mojibake-проверке — литерал из 8 символов, а не диапазон.
+    Любая буква вне А/Я/а/я/Ё/ё (Б, В, К, Э, Ю…) помечалась «кракозяброй» и
+    нормальный UTF-8 текст уходил в CP1251-декодирование.
+    """
+    from src.kg.junk import clean_title
+
+    titles = [
+        "Квадратные уравнения",
+        "Сила тяжести",
+        "Теорема Виета",
+        "Скорость и ускорение",
+        "Электрический ток",
+        "Уравнение",
+    ]
+    for t in titles:
+        assert clean_title(t) == t, f"{t!r} не должен меняться (mojibake-ложноположительное)"
+
+
 def test_heuristic_fallback_and_degenerate():
     kg = build_heuristic_graph("физ7", ["Сила", "Скорость"], "## Ускорение\nтекст\n## Ускорение")
     d = kg.to_dict()
