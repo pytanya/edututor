@@ -302,6 +302,8 @@ class AgentRuntime:
         остальные сохраняются как есть в ``content_envelopes`` — HTTP-слой
         превращает каждый в отдельное сообщение-блок чата.
         """
+        if not (state.final_answer or "").strip():
+            self._log_empty_final(state)
         raw = state.final_answer or "Не смог сформировать ответ."
         all_envs = parse_content_envelopes(raw)
         if all_envs:
@@ -444,6 +446,28 @@ class AgentRuntime:
             prefix=(raw or "")[:40],
             attempt=attempt,
             outcome=outcome,
+            session_id=state.session_id,
+        )
+
+    def _log_empty_final(self, state: AgentGraphState) -> None:
+        """Пишет событие наблюдаемости final.empty: планировщик вернул пустой
+        финальный ответ (final_answer пуст/whitespace) — до подстановки заглушки.
+        """
+        if not self.logger:
+            return
+        finish_reason = None
+        for step in reversed(state.steps):
+            if step.action == "final":
+                finish_reason = step.finish_reason
+                break
+        model = self.models.get(state.current_model, self.models.get("planner", ""))
+        self.logger.log(
+            self.trace_id,
+            "WARNING",
+            "final.empty",
+            agent={"model": model},
+            finish_reason=finish_reason,
+            steps=len(state.steps),
             session_id=state.session_id,
         )
 

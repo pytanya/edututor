@@ -265,3 +265,49 @@ async def test_finalize_plain_text_does_not_log_truncated(tmp_path):
             if line.strip()
         ]
     assert not any(rec.get("event") == "final.truncated" for rec in records)
+
+
+@pytest.mark.asyncio
+async def test_finalize_logs_final_empty_event(tmp_path):
+    """Пустой финальный ответ планировщика пишет final.empty в JSONL."""
+    log_path = tmp_path / "agent.jsonl"
+    planner = QueuedLLM("")
+    rt = _runtime(planner)
+    rt.logger = JsonlLogger(str(log_path))
+    result = await run_agent(
+        rt,
+        [{"role": "user", "content": "дай материалы"}],
+        session_id="sess-empty",
+        trace_id="trace-empty",
+    )
+    assert "Не смог сформировать ответ" in result.final_answer
+    records = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    events = [rec for rec in records if rec.get("event") == "final.empty"]
+    assert len(events) == 1
+    assert events[0]["trace_id"] == "trace-empty"
+    assert events[0]["session_id"] == "sess-empty"
+    assert events[0]["agent"]["model"] == "p"
+    assert events[0]["steps"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_finalize_plain_text_does_not_log_empty(tmp_path):
+    """Непустой финальный ответ не пишет final.empty."""
+    log_path = tmp_path / "agent.jsonl"
+    planner = QueuedLLM("Нормальный ответ")
+    rt = _runtime(planner)
+    rt.logger = JsonlLogger(str(log_path))
+    result = await run_agent(rt, [{"role": "user", "content": "hi"}])
+    assert result.final_answer == "Нормальный ответ"
+    records = []
+    if log_path.exists():
+        records = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    assert not any(rec.get("event") == "final.empty" for rec in records)
