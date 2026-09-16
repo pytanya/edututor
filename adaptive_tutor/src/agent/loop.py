@@ -281,6 +281,7 @@ class AgentRuntime:
             parsed = _safe_loads(out)
             status = "ok" if parsed.get("status") == "ok" else "error"
             self._notify("agent.tool", {"name": call.name, "status": status})
+            self._log_tool_result(state, call.name, call.arguments, parsed, status)
             _merge_tool_output(call.name, out, rag_context, web_results)
             observations.append({"role": "user", "content": _observation_text(call.name, out)})
 
@@ -468,6 +469,33 @@ class AgentRuntime:
             agent={"model": model},
             finish_reason=finish_reason,
             steps=len(state.steps),
+            session_id=state.session_id,
+        )
+
+    def _log_tool_result(
+        self,
+        state: AgentGraphState,
+        name: str,
+        arguments: dict[str, Any] | None,
+        parsed: dict[str, Any],
+        status: str,
+    ) -> None:
+        """Пишет событие наблюдаемости agent.tool: аргументы запроса и число
+        найденных результатов (для rag_search/web_search — длина data).
+        """
+        if not self.logger:
+            return
+        model = self.models.get(state.current_model, self.models.get("planner", ""))
+        data = parsed.get("data") if status == "ok" else None
+        result_count = len(data) if isinstance(data, list) else None
+        self.logger.log(
+            self.trace_id,
+            "INFO",
+            "agent.tool",
+            agent={"model": model, "action": "tool"},
+            tool={"name": name, "arguments": arguments or {}},
+            status=status,
+            result_count=result_count,
             session_id=state.session_id,
         )
 

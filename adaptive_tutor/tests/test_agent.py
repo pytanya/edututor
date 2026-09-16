@@ -331,6 +331,36 @@ async def test_agent_emits_step_tool_and_tool_result_events(monkeypatch):
     assert events[-1][1]["trace_id"]
 
 
+async def test_agent_logs_tool_query_and_result_count(tmp_path, monkeypatch):
+    """Событие agent.tool в JSONL содержит аргументы запроса и число результатов."""
+    from src.observability.logger import JsonlLogger
+
+    log_path = tmp_path / "agent.jsonl"
+
+    async def fake_execute_tool(name, args, ctx, tracker):
+        return _RAG_TOOL_OUTPUT
+
+    monkeypatch.setattr("src.agent.loop.execute_tool", fake_execute_tool)
+    rt = _make_events_runtime(RecordingLLM(), lambda ev, data: None)
+    rt.logger = JsonlLogger(str(log_path))
+    await run_agent(
+        rt, [{"role": "user", "content": "расскажи про Пифагора"}], session_id="sess-tool"
+    )
+
+    records = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    tool_events = [rec for rec in records if rec.get("event") == "agent.tool"]
+    assert len(tool_events) == 1
+    ev = tool_events[0]
+    assert ev["tool"]["name"] == "rag_search"
+    assert ev["tool"]["arguments"].get("query") == "Пифагор"
+    assert ev["result_count"] == 1
+    assert ev["session_id"] == "sess-tool"
+
+
 async def test_agent_emits_finalize_event():
     events: list[tuple[str, dict]] = []
     rt = AgentRuntime(
