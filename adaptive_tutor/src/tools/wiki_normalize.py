@@ -97,8 +97,13 @@ def normalize_student(student_dir: Path, stats: dict[str, int]) -> None:
         kept_subjects.add(subject)
         stats["groups"] += 1
     for subj_dir in sorted(p for p in student_dir.iterdir() if p.is_dir()):
-        if any(x.suffix == ".md" for x in subj_dir.iterdir()):
+        articles = [
+            x for x in subj_dir.iterdir()
+            if x.suffix == ".md" and x.name != _INDEX_NAME
+        ]
+        if articles:
             continue
+        (subj_dir / _INDEX_NAME).unlink(missing_ok=True)
         subj_dir.rmdir()
         stats["subjects_removed"] += 1
     for subject in kept_subjects:
