@@ -11,7 +11,7 @@ from src.api.server import create_app
 from src.config import settings
 from src.llm.base import LLMClient, LLMResponse, TokenUsage
 from src.student.store import StudentStore
-from src.wiki.enrich import build_messages, enrich_body
+from src.wiki.enrich import build_messages, enrich_body, is_stub_body
 from src.wiki.models import WikiArticle, WikiNote
 from src.wiki.store import KnowledgeWiki, slug
 
@@ -367,6 +367,26 @@ async def test_enrich_body_skips_existing_long_body(tmp_path):
     llm = _FakeLLM(text="Другой конспект по дробям")
     assert await enrich_body(wiki, "Математика", "Дроби", ["сниппет"], llm, model="") is None
     assert llm.calls == 0
+
+
+def test_is_stub_body_detects_placeholder_and_empty():
+    assert is_stub_body("") is True
+    assert (
+        is_stub_body("Материал по теме «Дроби» накапливается по мере прохождения квизов.")
+        is True
+    )
+    assert is_stub_body("Полноценный конспект по дробям.") is False
+
+
+async def test_enrich_body_enriches_default_stub_body(tmp_path):
+    wiki = KnowledgeWiki(tmp_path, student_id="s1")
+    wiki.upsert(WikiArticle(subject="Математика", topic="Дроби"))
+    llm = _FakeLLM(text="Конспект: дроби, числитель, знаменатель, сложение дробей.")
+    result = await enrich_body(
+        wiki, "Математика", "Дроби", ["сниппет о дробях"], llm, model=""
+    )
+    assert result is not None
+    assert "числитель" in result["body"]
 
 
 async def test_enrich_body_short_answer_keeps_shell(tmp_path):

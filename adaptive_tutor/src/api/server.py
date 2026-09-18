@@ -574,7 +574,7 @@ async def _schedule_enrich(
     материалах темы и наличии RAG. Ошибки глотаются."""
     if not settings.wiki_enrich_enabled or not body.topic:
         return
-    if (art.body or "").strip():
+    if not wiki_enrich.is_stub_body(art.body):
         return
     rag = app.state.rag_engine
     key = "|".join((body.subject.strip(), body.grade.strip(), body.topic.strip()))

@@ -19,6 +19,12 @@ _SYSTEM = (
 _MAX_CONTEXT_CHARS = 4000
 
 
+def is_stub_body(body: str) -> bool:
+    """Тело — дефолтная заглушка или пустое (подлежит обогащению)."""
+    body = (body or "").strip()
+    return not body or "накапливается по мере прохождения квизов" in body
+
+
 def build_messages(topic: str, context: list[str]) -> list[dict[str, str]]:
     """Сообщения для LLM; контекст обрезается до _MAX_CONTEXT_CHARS."""
     chunks = [c for c in (context or []) if c and c.strip()]
@@ -37,7 +43,7 @@ async def enrich_body(
 ) -> dict[str, Any] | None:
     """Генерирует/обновляет тело статьи. None — статья-заглушка или сбой."""
     art = wiki.get(subject, topic)
-    if art is None or len((art.body or "").strip()) > 20:
+    if art is None or not is_stub_body(art.body):
         return None
     chunks = [c for c in (context or []) if c and c.strip()]
     if not chunks or llm is None:
