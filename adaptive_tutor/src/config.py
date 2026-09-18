@@ -135,6 +135,10 @@ class Settings(BaseSettings):
     wiki_enrich_enabled: bool = Field(
         default=True, description="Включить ленивое LLM-обогащение тела статьи"
     )
+    subject_aliases: dict[str, str] = Field(
+        default_factory=dict,
+        description="Алиасы предметов: вариант -> канон (пустой канон = предмет не задан)",
+    )
 
     @property
     def resolved_knowledge_wiki_dir(self) -> str:

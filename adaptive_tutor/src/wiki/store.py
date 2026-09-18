@@ -32,6 +32,31 @@ def slug(text: str) -> str:
     return s or "topic"
 
 
+_DEFAULT_SUBJECT_ALIASES = {"общая тема": ""}
+
+def canonicalize(subject: str, aliases: dict[str, str] | None = None) -> str:
+    """Нормализация предмета: пробелы/регистр/точка + алиас-мапа -> канон.
+
+    Возвращает пустую строку, когда вариант означает «предмет не задан»
+    («общая тема» по умолчанию; остальные алиасы — из настроек).
+    Встроенные алиасы нельзя переопределить — дополняются настройками.
+    """
+    s = " ".join((subject or "").split())
+    if s.endswith("."):
+        s = s[:-1]
+    if not s:
+        return ""
+    alias_map = {
+        **_DEFAULT_SUBJECT_ALIASES,
+        **(aliases if aliases is not None else (settings.subject_aliases or {})),
+    }
+    low = s.lower()
+    for variant, canon in alias_map.items():
+        if low == str(variant or "").strip().lower():
+            return (canon or "").strip()
+    return s
+
+
 class KnowledgeWiki:
     """Персональные статьи ученика: <root>/<student_id>/<slug(subject)>/<slug(topic)>.md.
 
@@ -154,6 +179,23 @@ class KnowledgeWiki:
             self._write_index(subject)
         return True
 
+    def _infer_subject(self, topic: str) -> str | None:
+        """Предмет по похожей теме среди существующих статей (slug-совпадение)."""
+        if not topic:
+            return None
+        ts = slug(topic)
+        for art in self.list_articles():
+            if slug(art.topic) == ts and canonicalize(art.subject):
+                return art.subject
+        return None
+
+    def resolve_subject(self, subject: str = "", topic: str = "") -> str:
+        """Канонический предмет: алиасы -> по похожей теме -> «общая тема»."""
+        s = canonicalize(subject)
+        if not s:
+            s = self._infer_subject(topic) or "общая тема"
+        return s
+
     def apply_record(
         self,
         record: Any,
@@ -178,7 +220,7 @@ class KnowledgeWiki:
         correct = r.get("correct")
         if score is None or correct is None:
             return None
-        human_subject = subject or r.get("subject") or "общая тема"
+        human_subject = self.resolve_subject(subject or r.get("subject") or "", topic)
         art = self.get(human_subject, topic)
         if art is None:
             art = WikiArticle(
@@ -206,6 +248,7 @@ class KnowledgeWiki:
         for topic, mastery in (topic_updates or {}).items():
             if not topic:
                 continue
+            subject = self.resolve_subject(subject, topic)
             art = self.get(subject, topic)
             if art is None:
                 art = WikiArticle(subject=subject, topic=topic, title=topic)
