@@ -607,3 +607,45 @@ def test_wiki_hook_on_evaluation_creates_article_and_record(tmp_path, monkeypatc
     assert rows[0]["topic"] == "Drob"
     assert rows[0]["correct"] == 1
     store.close()
+
+
+def test_wiki_hook_evaluation_falls_back_to_session_subject(tmp_path, monkeypatch):
+    """Пустой body.subject -> предмет сессии (если сессия уже знает его)."""
+    monkeypatch.setattr(settings, "knowledge_wiki_dir", str(tmp_path / "wiki"))
+    store = StudentStore(str(tmp_path / "students.db"))
+    app = create_app(
+        runtime_factory=_eval_runtime_factory(
+            '{"type": "evaluation", "text": "Верно!",'
+            '"payload": {"correct": true, "feedback": "ок", "knowledge_delta": 0.2}}'
+        ),
+        student_store=store,
+    )
+    app.state.rag_engine = None
+    app.state.provisioner = None
+    with TestClient(app) as c:
+        c.post(
+            "/chat",
+            json={
+                "message": "Изучаем тему: Крымская война",
+                "session_id": "ses_fb",
+                "student_id": "stu_fb",
+                "topic": "Крымская война",
+                "subject": "История",
+            },
+        )
+        resp = c.post(
+            "/chat",
+            json={
+                "message": "Ответ: 3/4",
+                "session_id": "ses_fb",
+                "student_id": "stu_fb",
+                "topic": "Реформы Александра II",
+                "subject": "",
+            },
+        )
+        assert resp.status_code == 200
+        wiki_body = c.get("/student/stu_fb/wiki").json()
+    subjects = [g["subject"] for g in wiki_body["subjects"]]
+    assert "История" in subjects
+    assert "общая тема" not in subjects
+    store.close()

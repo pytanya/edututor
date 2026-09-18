@@ -1919,7 +1919,7 @@ async def _run_chat(
                 rec_data["score01"] = 1.0 if record.correct else 0.0
                 art = wiki.apply_record(
                     rec_data,
-                    subject=body.subject,
+                    subject=body.subject or session.subject or "",
                     grade=body.grade,
                     curriculum="",
                 )
