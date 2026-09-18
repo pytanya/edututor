@@ -1,8 +1,8 @@
-// KnowledgeWikiPanel — «Конспекты»: предметы/статьи из /student/{id}/wiki,
-// тепловая карта мастерства (MasteryWall), ридер TopicArticle, экспорт CSV/OKF.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+// KnowledgeWikiPanel — «Конспекты»: stats-бар, чипы-фильтры по предметам,
+// карточки статей с прогресс-баром, ридер TopicArticle, экспорт CSV/OKF.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api'
-import MasteryWall, { masteryClass } from './MasteryWall'
+import { masteryClass } from './MasteryWall'
 import TopicArticle from './TopicArticle'
 
 const EMPTY_TEXT = 'Пройдите квиз по теме — конспекты появятся.'
@@ -11,13 +11,19 @@ function toPct(m) {
   return Math.round((Number(m) || 0) * 100)
 }
 
+function shortDate(iso) {
+  return iso ? String(iso).slice(0, 10) : ''
+}
+
 export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject = '', grade = '', onError = null }) {
   const [groups, setGroups] = useState([])
   const [article, setArticle] = useState(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [query, setQuery] = useState('')
+  const [chip, setChip] = useState('')
   const [collapsedSubjects, setCollapsedSubjects] = useState({})
+  const chipTouched = useRef(false)
 
   const load = useCallback(async () => {
     if (!studentId) return
@@ -35,9 +41,27 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
 
   const fail = (e) => onError?.(e?.message || String(e))
 
+  const subjects = useMemo(() => (groups || []).map((g) => g.subject || '').filter(Boolean), [groups])
+
+  const subjectCount = (s) =>
+    (groups.find((g) => (g.subject || '') === s)?.articles || []).length
+
+  // Активный предмет по умолчанию — предмет текущей сессии (если он есть в конспектах).
+  useEffect(() => {
+    if (!chipTouched.current && subject && subjects.includes(subject)) {
+      setChip(subject)
+    }
+  }, [subject, subjects])
+
+  const active = chip || (subject && subjects.includes(subject) ? subject : '')
+
   const toggleSubject = (subj) => {
     setCollapsedSubjects((prev) => ({ ...prev, [subj]: !prev[subj] }))
   }
+
+  // По умолчанию раскрыт только активный предмет; «Все» — все раскрыты.
+  const isCollapsed = (subj) =>
+    collapsedSubjects[subj] !== undefined ? collapsedSubjects[subj] : active !== '' && subj !== active
 
   const openArticle = async (a) => {
     if (!studentId) return
@@ -47,16 +71,6 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
       setArticle(full)
     } catch (e) {
       fail(e)
-    }
-  }
-
-  const openByTopic = (topic) => {
-    for (const g of groups) {
-      const a = (g.articles || []).find((x) => x.topic === topic)
-      if (a) {
-        openArticle({ ...a, subject: a.subject || g.subject })
-        return
-      }
     }
   }
 
@@ -111,26 +125,65 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
 
   if (!studentId) return null
 
-  const cells = []
-  for (const g of groups || []) {
-    for (const a of g.articles || []) {
-      cells.push({ ...a, subject: a.subject || g.subject })
-    }
-  }
-  const wallTopics = cells.map((a) => ({ topic: a.topic, subject: a.subject, mastery: Number(a.mastery) || 0 }))
+  const totalArticles = (groups || []).reduce((n, g) => n + (g.articles || []).length, 0)
 
   const filteredGroups = useMemo(() => {
-    if (!query.trim()) return groups
-    const q = query.toLowerCase()
-    return (groups || []).map((g) => ({
+    let list = (groups || []).map((g) => ({
       ...g,
-      articles: (g.articles || []).filter(
-        (a) =>
-          (a.topic || a.title || '').toLowerCase().includes(q) ||
-          (a.subject || g.subject || '').toLowerCase().includes(q),
+      articles: [...(g.articles || [])].sort((a, b) =>
+        String(b.last_studied || '').localeCompare(String(a.last_studied || '')),
       ),
-    })).filter((g) => (g.articles || []).length > 0)
-  }, [groups, query])
+    }))
+    const q = query.trim().toLowerCase()
+    if (q) {
+      list = list
+        .map((g) => ({
+          ...g,
+          articles: (g.articles || []).filter(
+            (a) =>
+              (a.topic || a.title || '').toLowerCase().includes(q) ||
+              (a.subject || g.subject || '').toLowerCase().includes(q) ||
+              (a.concepts || []).some((c) => String(c).toLowerCase().includes(q)),
+          ),
+        }))
+        .filter((g) => g.articles.length > 0)
+    }
+    if (chipTouched.current && chip) {
+      list = list.filter((g) => (g.subject || '') === chip)
+    }
+    return [...list].sort((a, b) => {
+      const aActive = (a.subject || '') === active ? 0 : 1
+      const bActive = (b.subject || '') === active ? 0 : 1
+      if (aActive !== bActive) return aActive - bActive
+      return (a.subject || '').localeCompare(b.subject || '')
+    })
+  }, [groups, query, active])
+
+  const stats = useMemo(() => {
+    let attempts = 0
+    let correct = 0
+    let topics = 0
+    for (const g of filteredGroups) {
+      for (const a of g.articles) {
+        topics += 1
+        attempts += a.attempts || 0
+        correct += a.correct || 0
+      }
+    }
+    const avgMastery = topics
+      ? filteredGroups.reduce(
+          (s, g) => s + g.articles.reduce((ss, a) => ss + (a.mastery || 0), 0),
+          0,
+        ) / topics
+      : 0
+    return { topics, attempts, avgMastery, accuracy: attempts ? correct / attempts : 0 }
+  }, [filteredGroups])
+
+  const siblings = article
+    ? ((groups || []).find((g) => (g.subject || '') === (article.subject || ''))?.articles || [])
+        .map((a) => ({ subject: a.subject || article.subject, topic: a.topic }))
+    : []
+  const curIndex = article ? siblings.findIndex((s) => s.topic === article.topic) : -1
 
   return (
     <section className="panel wiki-panel">
@@ -144,11 +197,24 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
 
       {note ? <div className="wiki-note">{note}</div> : null}
 
-      {cells.length === 0 ? (
+      {totalArticles === 0 ? (
         <p className="muted">{EMPTY_TEXT}</p>
       ) : (
         <>
-          <MasteryWall topics={wallTopics} onSelect={openByTopic} />
+          <div className="wiki-stats">
+            <div className="wiki-stat"><b>{stats.topics}</b><span>тем</span></div>
+            <div className="wiki-stat"><b>{stats.attempts}</b><span>попыток</span></div>
+            <div className="wiki-stat"><b>{Math.round(stats.avgMastery * 100)}%</b><span>ср.мастерство</span></div>
+            <div className="wiki-stat"><b>{Math.round(stats.accuracy * 100)}%</b><span>точность</span></div>
+          </div>
+
+          <div className="wiki-chips">
+            <button type="button" className={`wiki-chip${active === '' ? ' active' : ''}`} onClick={() => setChip('')}>Все · {totalArticles}</button>
+            {subjects.map((s) => (
+              <button type="button" key={s} className={`wiki-chip${active === s ? ' active' : ''}`} onClick={() => { chipTouched.current = true; setChip(s) }}>{s} · {subjectCount(s)}</button>
+            ))}
+          </div>
+
           <div className="wiki-search">
             <input
               type="text"
@@ -157,31 +223,36 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
+
           <div className="wiki-groups">
             {(filteredGroups || []).map((g) => (
               <div className="wiki-group" key={g.subject || 'subject'}>
-                <div className="wiki-group-header" onClick={() => toggleSubject(g.subject || '')}>
+                <div className={`wiki-group-header${g.subject === active ? ' current' : ''}`} onClick={() => toggleSubject(g.subject || '')}>
                   <h4 className="wiki-subject">{g.subject}</h4>
-                  <span className={`collapsible-arrow ${collapsedSubjects[g.subject || ''] ? '' : 'open'}`}>▾</span>
+                  <span className="wiki-count">{(g.articles || []).length}</span>
+                  <span className={`collapsible-arrow ${isCollapsed(g.subject || '') ? '' : 'open'}`}>▾</span>
                 </div>
-                {!collapsedSubjects[g.subject || ''] && (
+                {!isCollapsed(g.subject || '') && (
                   <ul className="wiki-articles">
                     {(g.articles || []).map((a) => {
                       const pct = toPct(a.mastery)
+                      const cls = masteryClass(Number(a.mastery) || 0)
                       return (
-                        <li className="wiki-article-row" key={a.topic || a.title}>
-                          <button type="button" className="wiki-article-title" onClick={() => openArticle({ ...a, subject: a.subject || g.subject })}>
-                            {a.title || a.topic}
-                          </button>
-                          <span className={`wiki-badge ${masteryClass(Number(a.mastery) || 0)}`}>{pct}%</span>
-                          <span className="wiki-attempts">попыток: {a.attempts || 0}</span>
-                          <button
-                            type="button"
-                            className="wiki-delete"
-                            aria-label={`Удалить ${a.title || a.topic}`}
-                            title="Удалить конспект"
-                            onClick={() => removeArticle({ ...a, subject: a.subject || g.subject })}
-                          >✕</button>
+                        <li className="wiki-card" key={a.topic || a.title}>
+                          <div className="wiki-card-row">
+                            <span className={`wiki-dot ${cls}`} />
+                            <button type="button" className="wiki-article-title" onClick={() => openArticle({ ...a, subject: a.subject || g.subject })}>
+                              {a.title || a.topic}
+                            </button>
+                            <span className="wiki-pct">{pct}%</span>
+                          </div>
+                          <div className="wiki-bar"><div className={`wiki-bar-fill ${cls}`} style={{ width: `${pct}%` }} /></div>
+                          <div className="wiki-card-foot">
+                            <span className="wiki-attempts">
+                              попыток: {a.attempts || 0}{a.last_studied ? ` · ${shortDate(a.last_studied)}` : ''}
+                            </span>
+                            <button type="button" className="wiki-delete" aria-label={`Удалить ${a.title || a.topic}`} title="Удалить конспект" onClick={() => removeArticle({ ...a, subject: a.subject || g.subject })}>✕</button>
+                          </div>
                         </li>
                       )
                     })}
@@ -194,7 +265,15 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
       )}
 
       {article ? (
-        <TopicArticle article={article} onClose={() => setArticle(null)} onEnrich={doEnrich} enriching={busy} />
+        <TopicArticle
+          article={article}
+          onClose={() => setArticle(null)}
+          onEnrich={doEnrich}
+          enriching={busy}
+          siblings={siblings}
+          topicIndex={curIndex}
+          onNavigate={openArticle}
+        />
       ) : null}
     </section>
   )

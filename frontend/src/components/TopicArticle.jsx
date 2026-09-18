@@ -11,7 +11,7 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
   const notes = Array.isArray(article.notes) ? article.notes : []
   const concepts = Array.isArray(article.concepts) ? article.concepts : []
   const weakAreas = Array.isArray(article.weak_areas) ? article.weak_areas : []
-  const shortBody = body.trim().length <= 20
+  const shortBody = body.trim().length <= 20 || body.includes('накапливается по мере прохождения квизов')
   const pct = Math.round(mastery * 100)
   const cls = masteryClass(mastery)
 
