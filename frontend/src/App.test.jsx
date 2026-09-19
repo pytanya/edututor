@@ -15,6 +15,7 @@ vi.mock('./api', () => ({
     getKnowledgeGraph: vi.fn(() =>
       Promise.resolve({ topics: {}, stats: { total: 0, mastered: 0, in_progress: 0, not_studied: 0 } })),
     getReview: vi.fn(() => Promise.resolve({ stats: { due: 0 } })),
+    records: vi.fn(() => Promise.resolve({ records: [] })),
     getGraph: vi.fn(() => Promise.resolve({ nodes: [], edges: [] })),
     getRecommendations: vi.fn(() => Promise.resolve({ recommendations: [] })),
     wiki: vi.fn(() => Promise.resolve({ subjects: [] })),

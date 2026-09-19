@@ -1141,6 +1141,102 @@ a { color: var(--green-strong); }
 
 .kg-error { color: var(--err); }
 
+/* Группы предметов «Мои знания» */
+.kg-chips {
+  margin-bottom: 8px;
+}
+
+.kg-subjects {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kg-subj-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.kg-subj-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.kg-subj-header:hover .kg-subj-name { color: var(--ink-soft); }
+
+.kg-subj-name {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.kg-subj-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Вопросы и ответы внутри темы */
+.kg-records-toggle {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--green-strong);
+  cursor: pointer;
+  text-align: left;
+}
+
+.kg-records-toggle:hover { text-decoration: underline; }
+
+.kg-records {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.kg-record { display: flex; flex-direction: column; gap: 2px; }
+
+.kg-record + .kg-record {
+  border-top: 1px dashed var(--line);
+  padding-top: 6px;
+}
+
+.kg-record-q { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+
+.kg-record-a { font-size: 12px; }
+
+.kg-record-a.correct { color: var(--green-strong); }
+
+.kg-record-a.wrong { color: var(--err); }
+
+.kg-record-fb {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.kg-record-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ---------- KnowledgeGraphPanel («Созвездие») ---------- */
 
 .kgp-panel {
@@ -2060,6 +2156,16 @@ a { color: var(--green-strong); }
   border-radius: 10px;
 }
 
+.topic-enrich-note {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--green-strong);
+  background: var(--green-soft);
+  border: 1px solid rgba(47, 107, 79, 0.3);
+  border-radius: 9px;
+}
+
 .note-card {
   border-left: 4px solid var(--line);
   background: var(--card);
@@ -2336,52 +2442,7 @@ a { color: var(--green-strong); }
   font-size: 12.5px;
 }
 
-/* ---------- KG filters (фильтр по статусу) ---------- */
-
-.kg-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.kg-filter-btn {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--ink-soft);
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
-}
-
-.kg-filter-btn:hover:not(.active) {
-  border-color: var(--green);
-  color: var(--green-strong);
-}
-
-.kg-filter-btn.active {
-  background: var(--green-soft);
-  border-color: rgba(47, 107, 79, 0.4);
-  color: var(--green-strong);
-}
-
-.kg-filter-count {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--muted);
-}
-
-.kg-filter-btn.active .kg-filter-count {
-  color: var(--green-strong);
-}
+/* ---------- KG search ---------- */
 
 .kg-search {
   margin-bottom: 6px;

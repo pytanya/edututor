@@ -101,6 +101,8 @@ export const api = {
     request(`/student/${encodeURIComponent(studentId)}/graph/${encodeURIComponent(nodeId)}/related`),
   getGraphWiki: (studentId, nodeId) =>
     request(`/student/${encodeURIComponent(studentId)}/graph/${encodeURIComponent(nodeId)}/wiki`),
+  records: (studentId, subject = '') =>
+    request(`/student/${encodeURIComponent(studentId)}/records${subject ? `?subject=${encodeURIComponent(subject)}` : ''}`),
   wiki: (studentId, subject = '') =>
     request(`/student/${encodeURIComponent(studentId)}/wiki${subject ? `?subject=${encodeURIComponent(subject)}` : ''}`),
   wikiArticle: (studentId, subject, topic) =>

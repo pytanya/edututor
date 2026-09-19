@@ -1,20 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import TopicArticle, { isStubBody, noteType } from './TopicArticle'
+import TopicArticle, { isStubBody } from './TopicArticle'
 
 describe('TopicArticle helpers', () => {
   it('isStubBody распознаёт заглушку и пустоту', () => {
     expect(isStubBody('')).toBe(true)
     expect(isStubBody('Материал по теме «X» накапливается по мере прохождения квизов.')).toBe(true)
     expect(isStubBody('Реальный конспект')).toBe(false)
-  })
-
-  it('noteType типизирует заметки', () => {
-    expect(noteType({ feedback: 'Неверно. Правильный ответ: 3/4' })).toBe('error')
-    expect(noteType({ feedback: 'Ошибка в расчётах' })).toBe('error')
-    expect(noteType({ feedback: 'Уточни', question: 'Вопрос', student_answer: '1', correct_answer: '2' })).toBe('clarification')
-    expect(noteType({ feedback: 'Всё верно' })).toBe('info')
   })
 })
 
@@ -26,10 +19,6 @@ const art = (over = {}) => ({
   accuracy: 0.71,
   attempts: 4,
   body: 'Крымская война 1853–1856 — конфликт России против коалиции.',
-  notes: [
-    { date: '2026-09-15', feedback: 'Неверно', question: 'Кто командовал?', student_answer: 'Нахимов', correct_answer: 'Нахимов' },
-    { date: '2026-09-16', feedback: 'Уточнение', question: 'Повод войны?', student_answer: 'Синоп', correct_answer: 'Спор о святых местах' },
-  ],
   concepts: ['Парижский мир 1856'],
   weak_areas: ['причины и повод'],
   ...over,
@@ -49,14 +38,20 @@ describe('<TopicArticle/>', () => {
     expect(screen.getByText(/Крымская война 1853/)).toBeInTheDocument()
   })
 
-  it('заметки: класс по типу и раскрытие по клику', async () => {
-    const user = userEvent.setup()
-    const { container } = render(<TopicArticle article={art()} />)
-    const notes = container.querySelectorAll('.note-card')
-    expect(notes[0].classList.contains('error')).toBe(true)
-    expect(notes[1].classList.contains('clarification')).toBe(true)
-    await user.click(screen.getByRole('button', { name: /Уточнение/ }))
-    expect(container.querySelectorAll('.note-card-body').length).toBe(2)
+  it('не рендерит «Заметки» — вопросы и ответы в «Моих знаниях»', () => {
+    const a = art({
+      notes: [
+        { date: '2026-09-15', feedback: 'Неверно', question: 'Кто командовал?', student_answer: 'Нахимов', correct_answer: 'Нахимов' },
+      ],
+    })
+    render(<TopicArticle article={a} />)
+    expect(screen.queryByText(/Заметки/)).toBeNull()
+    expect(screen.queryByText('Кто командовал?')).toBeNull()
+  })
+
+  it('показывает статус обогащения внутри ридера', () => {
+    render(<TopicArticle article={art()} enrichNote="Конспект уже заполнен." />)
+    expect(screen.getByText('Конспект уже заполнен.')).toBeInTheDocument()
   })
 
   it('показывает источник в мета', () => {

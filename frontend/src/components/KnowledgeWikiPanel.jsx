@@ -23,6 +23,7 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
   const [query, setQuery] = useState('')
   const [chip, setChip] = useState('')
   const [collapsedSubjects, setCollapsedSubjects] = useState({})
+  const [enrichNote, setEnrichNote] = useState('')
   const chipTouched = useRef(false)
 
   const load = useCallback(async () => {
@@ -66,6 +67,7 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
   const openArticle = async (a) => {
     if (!studentId) return
     setNote('')
+    setEnrichNote('')
     try {
       const full = await api.wikiArticle(studentId, a.subject, a.topic)
       setArticle(full)
@@ -77,14 +79,14 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
   const doEnrich = async () => {
     if (!studentId || !article || busy) return
     setBusy(true)
-    setNote('')
+    setEnrichNote('')
     try {
       const res = await api.enrichWiki(studentId, article.subject, article.topic)
-      if (res?.note) setNote(res.note)
       if (res?.article) setArticle(res.article)
+      setEnrichNote(res?.note || (res?.article ? 'Конспект обогащён.' : 'Не удалось обогатить конспект.'))
       await load()
     } catch (e) {
-      fail(e)
+      setEnrichNote(e?.message || String(e))
     } finally {
       setBusy(false)
     }
@@ -270,6 +272,7 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
           onClose={() => setArticle(null)}
           onEnrich={doEnrich}
           enriching={busy}
+          enrichNote={enrichNote}
           siblings={siblings}
           topicIndex={curIndex}
           onNavigate={openArticle}

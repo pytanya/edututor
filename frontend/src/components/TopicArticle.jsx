@@ -1,6 +1,5 @@
-// TopicArticle — ридер конспекта: мета, статистика, изложение, заметки-карточки
-// с цветом по типу, концепции, слабые места, навигация по темам предмета.
-import { useState } from 'react'
+// TopicArticle — ридер конспекта: текст урока, статистика, слабые места,
+// концепции, навигация по темам предмета. Кнопка «Обогатить» + статус внутри.
 import Latex from './Latex'
 import { masteryClass } from './MasteryWall'
 
@@ -9,37 +8,17 @@ export function isStubBody(body) {
   return !b || b.includes('накапливается по мере прохождения квизов')
 }
 
-export function noteType(n) {
-  const fb = String(n?.feedback || '').toLowerCase()
-  if (/ошибк|неверн|неправильн/.test(fb)) return 'error'
-  if (n?.question || n?.student_answer || n?.correct_answer) return 'clarification'
-  return 'info'
-}
-
-const ICONS = { error: '🔴', clarification: '🟡', info: '🟢' }
-
-export default function TopicArticle({ article, onClose = null, onEnrich = null, enriching = false, siblings = [], topicIndex = -1, onNavigate = null }) {
-  const [openNotes, setOpenNotes] = useState(() => new Set([0]))
+export default function TopicArticle({ article, onClose = null, onEnrich = null, enriching = false, enrichNote = '', siblings = [], topicIndex = -1, onNavigate = null }) {
   if (!article) return null
   const mastery = typeof article.mastery === 'number' ? article.mastery : 0
   const accuracy = typeof article.accuracy === 'number' ? article.accuracy : 0
   const attempts = article.attempts || 0
   const body = article.body || ''
-  const notes = Array.isArray(article.notes) ? article.notes : []
   const concepts = Array.isArray(article.concepts) ? article.concepts : []
   const weakAreas = Array.isArray(article.weak_areas) ? article.weak_areas : []
   const stub = isStubBody(body)
   const pct = Math.round(mastery * 100)
   const cls = masteryClass(mastery)
-
-  const toggleNote = (i) => {
-    setOpenNotes((prev) => {
-      const next = new Set(prev)
-      if (next.has(i)) next.delete(i)
-      else next.add(i)
-      return next
-    })
-  }
 
   const prevArt = topicIndex > 0 ? siblings[topicIndex - 1] : null
   const nextArt = topicIndex >= 0 && topicIndex < siblings.length - 1 ? siblings[topicIndex + 1] : null
@@ -69,6 +48,8 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
           </div>
         </div>
 
+        {enrichNote ? <div className="topic-enrich-note">{enrichNote}</div> : null}
+
         <div className="topic-stats">
           <div className="topic-stat">
             <span className="topic-stat-label">Освоенность</span>
@@ -95,33 +76,6 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
 
         {weakAreas.length > 0 ? (
           <div className="topic-weak">Слабые места: {weakAreas.join(', ')}</div>
-        ) : null}
-
-        {notes.length > 0 ? (
-          <div className="topic-block">
-            <h3 className="topic-block-title">Заметки ({notes.length})</h3>
-            <ul className="topic-notes">
-              {notes.map((n, i) => {
-                const t = noteType(n)
-                return (
-                  <li key={`${n.date || ''}-${i}`} className={`note-card ${t}`}>
-                    <button type="button" className="note-card-head" aria-expanded={openNotes.has(i)} onClick={() => toggleNote(i)}>
-                      <span className="note-card-icon">{ICONS[t]}</span>
-                      <span className="note-card-title">{n.feedback}</span>
-                      {n.date ? <span className="note-date">{n.date}</span> : null}
-                    </button>
-                    {openNotes.has(i) ? (
-                      <div className="note-card-body">
-                        {n.question ? <div className="note-row"><span className="note-label">Вопрос:</span> {n.question}</div> : null}
-                        {n.student_answer ? <div className="note-row"><span className="note-label">Ваш ответ:</span> <em>{n.student_answer}</em></div> : null}
-                        {n.correct_answer ? <div className="note-row correct"><span className="note-label">Правильный ответ:</span> <strong>{n.correct_answer}</strong></div> : null}
-                      </div>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
         ) : null}
 
         {concepts.length > 0 ? (
