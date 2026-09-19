@@ -86,13 +86,14 @@ def knowledge_graph_payload(
 ) -> dict[str, Any]:
     """Точная форма ``GET /knowledge-graph`` (спека §5).
 
-    ``topics`` — словарь ``{topic: row_payload}``; у пустого списка строк всё
-    равно отдаются ``stats`` из нулей.
+    ``topics`` — словарь ``{subject|topic: row_payload}``: составной ключ
+    исключает коллизии одноимённых тем из разных предметов при subject="".
+    У пустого списка строк всё равно отдаются ``stats`` из нулей.
     """
     payloads = [row_payload(r) for r in rows]
     return {
         "student_id": student_id,
         "subject": subject,
-        "topics": {p["topic"]: p for p in payloads},
+        "topics": {f"{p.get('subject') or ''}|{p['topic']}": p for p in payloads},
         "stats": stats_of(payloads),
     }

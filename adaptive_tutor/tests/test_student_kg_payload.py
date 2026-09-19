@@ -34,8 +34,20 @@ def test_payload_stats():
         _row("b", "in_progress", 0.5, 1, 1),
     ]
     out = knowledge_graph_payload("stu", "ф", rows)
-    assert out["topics"]["a"]["accuracy"] == 1.0
+    assert out["topics"]["ф|a"]["accuracy"] == 1.0
+    assert out["topics"]["ф|b"]["topic"] == "b"
     assert out["stats"] == {"mastered": 1, "in_progress": 1, "not_studied": 0, "total": 2}
+
+
+def test_payload_no_topic_collision_across_subjects():
+    """Одноимённые темы разных предметов не перетирают друг друга (subject="")."""
+    rows = [
+        _row("Системы уравнений", "mastered", 0.9, 3, 3),
+        dict(_row("Системы уравнений", "in_progress", 0.5, 1, 1), subject="Физика"),
+    ]
+    out = knowledge_graph_payload("stu", "", rows)
+    assert out["topics"]["ф|Системы уравнений"]["subject"] == "ф"
+    assert out["topics"]["Физика|Системы уравнений"]["subject"] == "Физика"
 
 
 def test_payload_mastered_by_attempts_mastery_even_when_status_in_progress():

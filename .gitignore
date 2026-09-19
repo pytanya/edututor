@@ -40,3 +40,13 @@ Qwen_text_*.txt
 # Локальные артефакты, не для передачи/анализа
 .roo/
 adaptive_tutor/data/
+
+# Brainstorming/макеты (визуальный компаньон)
+.superpowers/
+
+# Разовые smoke-артефакты
+_smoke_out.json
+_repro_out.json
+
+# Случайный корневой lock без package.json
+/package-lock.json
