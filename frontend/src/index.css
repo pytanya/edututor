@@ -1944,6 +1944,17 @@ a { color: var(--green-strong); }
   gap: 8px;
 }
 
+.wiki-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.wiki-open {
+  padding: 2px 9px;
+  font-size: 11px;
+}
+
 .wiki-group-header.current .wiki-subject { color: var(--green-strong); }
 
 .wiki-count {

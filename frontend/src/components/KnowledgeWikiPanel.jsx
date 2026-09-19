@@ -253,7 +253,10 @@ export default function KnowledgeWikiPanel({ studentId, refreshKey = 0, subject 
                             <span className="wiki-attempts">
                               попыток: {a.attempts || 0}{a.last_studied ? ` · ${shortDate(a.last_studied)}` : ''}
                             </span>
-                            <button type="button" className="wiki-delete" aria-label={`Удалить ${a.title || a.topic}`} title="Удалить конспект" onClick={() => removeArticle({ ...a, subject: a.subject || g.subject })}>✕</button>
+                            <div className="wiki-card-actions">
+                              <button type="button" className="btn small wiki-open" onClick={() => openArticle({ ...a, subject: a.subject || g.subject })}>Открыть</button>
+                              <button type="button" className="wiki-delete" aria-label={`Удалить ${a.title || a.topic}`} title="Удалить конспект" onClick={() => removeArticle({ ...a, subject: a.subject || g.subject })}>✕</button>
+                            </div>
                           </div>
                         </li>
                       )
