@@ -592,6 +592,69 @@ def test_wiki_enrich_without_rag_returns_helping_note(wiki_client, tmp_path):
     assert body["note"].startswith("Нет материалов по теме в базе знаний")
 
 
+def test_wiki_enrich_already_filled_returns_note(wiki_client, tmp_path):
+    wiki = KnowledgeWiki(tmp_path / "wiki", student_id="stu_5")
+    wiki.upsert(
+        WikiArticle(
+            subject="Math", topic="Drob",
+            body="Полный конспект по дробям давно написан и не нуждается в правках.",
+        )
+    )
+    resp = wiki_client.post(
+        "/student/stu_5/wiki/enrich", json={"subject": "Math", "topic": "Drob"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["note"] == "Конспект уже заполнен."
+    assert body["article"]["body"].startswith("Полный конспект")
+
+
+def test_records_endpoint_returns_journal_json(tmp_path):
+    store = StudentStore(str(tmp_path / "students.db"))
+    app = create_app(runtime_factory=_fake_runtime_factory, student_store=store)
+    with TestClient(app) as c:
+        store.append_record(
+            "stu_r",
+            "ses_1",
+            {
+                "topic": "Дроби",
+                "subject": "Математика",
+                "question": "1/2 + 1/4?",
+                "student_answer": "3/4",
+                "correct": True,
+                "feedback": "Верно",
+                "score01": 1.0,
+            },
+        )
+        store.append_record(
+            "stu_r",
+            "ses_1",
+            {
+                "topic": "Дроби",
+                "subject": "Математика",
+                "question": "1/3 + 1/6?",
+                "student_answer": "1",
+                "correct": False,
+                "feedback": "Неверно. Правильный ответ: 1/2",
+                "score01": 0.0,
+            },
+        )
+        body = c.get("/student/stu_r/records").json()
+        assert len(body["records"]) == 2
+        first = body["records"][0]
+        assert first["topic"] == "Дроби"
+        assert first["question"] == "1/2 + 1/4?"
+        assert first["correct"] == 1
+        last = body["records"][1]
+        assert last["correct"] == 0
+        assert last["student_answer"] == "1"
+        filtered = c.get(
+            "/student/stu_r/records", params={"subject": "Физика"}
+        ).json()
+        assert filtered["records"] == []
+    store.close()
+
+
 def test_wiki_hook_on_evaluation_creates_article_and_record(tmp_path, monkeypatch):
     """Evaluation-ход: wiki.apply_record(record) + запись в session_records."""
     monkeypatch.setattr(settings, "knowledge_wiki_dir", str(tmp_path / "wiki"))

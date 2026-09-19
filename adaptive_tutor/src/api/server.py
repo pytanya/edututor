@@ -2224,6 +2224,19 @@ def create_app(
                 rows = []
         return knowledge_graph_payload(student_id, subject, rows)
 
+    @app.get("/student/{student_id}/records")
+    def student_records(
+        student_id: str,
+        subject: str = Query(default=""),
+        limit: int = Query(default=500, ge=1, le=2000),
+    ) -> dict[str, Any]:
+        """Журнал вопросов и ответов ученика (JSON) — основной источник «Мои знания»."""
+        store: StudentStore | None = app.state.student_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="хранилище недоступно")
+        records = store.list_records(student_id, subject=subject or None, limit=limit)
+        return {"records": records}
+
     @app.get("/student/{student_id}/recommendations")
     def student_recommendations(
         student_id: str, current_topic: str = "", subject: str = "", limit: int = 5
@@ -2389,6 +2402,11 @@ def create_app(
         art = wiki.get(body.subject, body.topic)
         if art is None:
             art = WikiArticle(subject=body.subject, topic=body.topic, title=body.topic)
+        if not wiki_enrich.is_stub_body(art.body):
+            return {
+                "article": art.to_dict(),
+                "note": "Конспект уже заполнен.",
+            }
         context = _rag_context(app, body.topic, body.subject, "")
         if not context:
             return {
