@@ -124,7 +124,7 @@ def test_knowledge_graph_endpoint_empty_and_filled(client):
         "/student/stu_1/knowledge-graph", params={"subject": "физика"}
     ).json()
     assert filled["stats"] == {"mastered": 1, "in_progress": 0, "not_studied": 0, "total": 1}
-    topic = filled["topics"]["тема-трижды"]
+    topic = filled["topics"]["физика|тема-трижды"]
     assert topic["mastery"] == pytest.approx(0.8285)
     assert topic["attempts"] == 3
     assert topic["accuracy"] == pytest.approx(1.0)
