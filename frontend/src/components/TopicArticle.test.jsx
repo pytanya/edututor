@@ -38,14 +38,16 @@ describe('<TopicArticle/>', () => {
     expect(screen.getByText(/Крымская война 1853/)).toBeInTheDocument()
   })
 
-  it('не рендерит «Заметки» — вопросы и ответы в «Моих знаниях»', () => {
+  it('рендерит «Заметки» с аккордеоном NoteItem', () => {
     const a = art({
       notes: [
         { date: '2026-09-15', feedback: 'Неверно', question: 'Кто командовал?', student_answer: 'Нахимов', correct_answer: 'Нахимов' },
       ],
     })
     render(<TopicArticle article={a} />)
-    expect(screen.queryByText(/Заметки/)).toBeNull()
+    // Заголовок секции заметок виден
+    expect(screen.getByText(/Заметки/)).toBeInTheDocument()
+    // Вопрос скрыт (аккордеон свёрнут по умолчанию)
     expect(screen.queryByText('Кто командовал?')).toBeNull()
   })
 

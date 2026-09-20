@@ -1,7 +1,10 @@
-// StudentKGPanel — «Мои знания»: вопросы и ответы ученика + прогресс,
-// сгруппированы по предметам (источник: /knowledge-graph + /records).
-import { useEffect, useMemo, useRef, useState } from 'react'
+// StudentKGPanel — «Мои знания»: статусы тем, прогресс-бары мастерства,
+// вопросы и ответы, конспекты в модале, экспорт CSV/OKF.
+// Объединяет бывшие панели «Мои знания» и «Конспекты».
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api'
+import { masteryClass } from './MasteryWall'
+import TopicArticle from './TopicArticle'
 
 export const statusMeta = {
   in_progress: { order: 0, label: 'В процессе', color: '#fbbf24' },
@@ -28,9 +31,14 @@ export function sortedByStatus(topics) {
 
 const MAX_RECORDS = 10
 
+function toPct(m) {
+  return Math.round((Number(m) || 0) * 100)
+}
+
 export default function StudentKGPanel({
   studentId = '',
   subject = '',
+  grade = '',
   onStartReview = null,
   busy = false,
   reloadKey = 0,
@@ -44,8 +52,14 @@ export default function StudentKGPanel({
   const [chip, setChip] = useState('')
   const [collapsedSubjects, setCollapsedSubjects] = useState({})
   const [openTopic, setOpenTopic] = useState({})
+  const [article, setArticle] = useState(null)
+  const [enriching, setEnriching] = useState(false)
+  const [enrichNote, setEnrichNote] = useState('')
+  const [wikiGroups, setWikiGroups] = useState([])
+  const [exportNote, setExportNote] = useState('')
   const chipTouched = useRef(false)
 
+  // ─── Загрузка knowledge-graph ───
   useEffect(() => {
     if (!studentId) return undefined
     let alive = true
@@ -64,6 +78,7 @@ export default function StudentKGPanel({
     }
   }, [studentId, reloadKey])
 
+  // ─── Загрузка review stats + records ───
   useEffect(() => {
     if (!studentId) return undefined
     let alive = true
@@ -81,6 +96,21 @@ export default function StudentKGPanel({
     }
   }, [studentId, reloadKey])
 
+  // ─── Загрузка wiki (для мастерства и конспектов) ───
+  const loadWiki = useCallback(async () => {
+    if (!studentId) return
+    try {
+      const data = await api.wiki(studentId)
+      setWikiGroups(data?.subjects || [])
+    } catch {
+      setWikiGroups([])
+    }
+  }, [studentId])
+
+  useEffect(() => {
+    loadWiki()
+  }, [loadWiki, reloadKey])
+
   if (!studentId) return null
 
   const rawTopics = useMemo(
@@ -89,16 +119,39 @@ export default function StudentKGPanel({
     [kg],
   )
 
+  // ─── Объединяем данные KG и Wiki для каждой темы ───
+  const wikiByKey = useMemo(() => {
+    const m = {}
+    for (const g of wikiGroups || []) {
+      for (const a of g.articles || []) {
+        const key = `${(a.subject || g.subject || '').trim().toLowerCase()}|${(a.topic || '').trim()}`
+        m[key] = a
+      }
+    }
+    return m
+  }, [wikiGroups])
+
   const subjectMap = useMemo(() => {
     const m = {}
     for (const t of rawTopics) {
       const s = (t.subject || '').trim() || 'общая тема'
       if (!m[s]) m[s] = []
-      m[s].push(t)
+      // Мержим данные wiki
+      const wKey = `${s.toLowerCase()}|${(t.topic || '').trim()}`
+      const wiki = wikiByKey[wKey]
+      m[s].push({
+        ...t,
+        mastery: wiki?.mastery ?? t.mastery ?? 0,
+        attempts: wiki?.attempts ?? t.attempts ?? 0,
+        correct: wiki?.correct ?? t.correct ?? 0,
+        accuracy: wiki?.accuracy ?? t.accuracy,
+        last_studied: wiki?.last_studied,
+        hasArticle: !!wiki,
+      })
     }
     for (const k of Object.keys(m)) m[k] = sortedByStatus(m[k])
     return m
-  }, [rawTopics])
+  }, [rawTopics, wikiByKey])
 
   const subjectNames = Object.keys(subjectMap).sort()
 
@@ -173,15 +226,92 @@ export default function StudentKGPanel({
     ['не изучено', stats.not_studied, statusMeta.not_studied.color],
   ]
 
+  // ─── Открытие конспекта ───
+  const openArticle = async (t, subjectName) => {
+    const s = t.subject || subjectName || ''
+    setEnrichNote('')
+    try {
+      const full = await api.wikiArticle(studentId, s, t.topic)
+      setArticle(full)
+    } catch {
+      // Если wiki-статья не найдена — показываем заглушку
+      setArticle({ title: t.topic, topic: t.topic, subject: s, body: '', mastery: t.mastery || 0, accuracy: t.accuracy || 0, attempts: t.attempts || 0 })
+    }
+  }
+
+  const doEnrich = async () => {
+    if (!studentId || !article || enriching) return
+    setEnriching(true)
+    setEnrichNote('')
+    try {
+      const res = await api.enrichWiki(studentId, article.subject, article.topic)
+      if (res?.article) setArticle(res.article)
+      setEnrichNote(res?.note || (res?.article ? 'Конспект обогащён.' : 'Не удалось обогатить конспект.'))
+      await loadWiki()
+    } catch (e) {
+      setEnrichNote(e?.message || String(e))
+    } finally {
+      setEnriching(false)
+    }
+  }
+
+  // ─── Клик по теме ───
+  const handleTopicClick = (t, subjectName) => {
+    if (t.status === 'not_studied') {
+      // Неизученная — запускаем новый урок
+      if (onStudy) onStudy(t.topic)
+    } else {
+      // Пройденная/в_процессе — открываем конспект
+      openArticle(t, subjectName)
+    }
+  }
+
+  // ─── Учить заново (из модала конспекта) ───
+  const handleRestudy = (topic) => {
+    setArticle(null)
+    if (onStudy) onStudy(topic)
+  }
+
+  // ─── Экспорт ───
+  const exportCsv = async () => {
+    try {
+      await api.exportCsv(studentId)
+    } catch (e) {
+      setExportNote(e?.message || String(e))
+    }
+  }
+
+  const exportOkf = async () => {
+    try {
+      const res = await api.exportOkf(studentId, subject, grade)
+      const files = Array.isArray(res?.files) ? res.files.length : 0
+      const status = res?.conformant ? 'соответствует OKF' : 'есть ошибки валидации'
+      setExportNote(`OKF: ${files} файлов · ${status}${res?.dir ? ` · ${res.dir}` : ''}`)
+    } catch (e) {
+      setExportNote(`OKF: ${e?.message || String(e)}`)
+    }
+  }
+
+  // ─── Siblings для навигации в модале ───
+  const siblings = article
+    ? Object.values(subjectMap)
+        .flat()
+        .filter((t) => (t.subject || '') === (article.subject || ''))
+        .map((t) => ({ subject: t.subject || article.subject, topic: t.topic }))
+    : []
+  const curIndex = article ? siblings.findIndex((s) => s.topic === article.topic) : -1
+
   return (
     <section className="panel kg-panel">
       <div className="kg-head">
         {subject && <span className="kg-subject">· {subject}</span>}
-        {onStartReview && dueCount > 0 && (
-          <button type="button" className="btn review kg-review" disabled={busy} onClick={onStartReview}>
-            Повторить ({dueCount})
-          </button>
-        )}
+        <div className="kg-head-actions">
+          {onStartReview && dueCount > 0 && (
+            <button type="button" className="btn review kg-review" disabled={busy} onClick={onStartReview}>
+              Повторить ({dueCount})
+            </button>
+          )}
+        </div>
       </div>
 
       {error ? (
@@ -257,6 +387,9 @@ export default function StudentKGPanel({
                             : attempts > 0
                               ? correct / attempts
                               : 0
+                        const mastery = Number(t.mastery) || 0
+                        const pct = toPct(mastery)
+                        const cls = masteryClass(mastery)
                         const weak = Array.isArray(t.weak_areas) ? t.weak_areas : []
                         const key = `${s}|${t.topic}`
                         const topicRecords = recordsByKey[recordKey(s, t.topic)] || []
@@ -266,59 +399,60 @@ export default function StudentKGPanel({
                             <span className="kg-status-dot" style={{ background: meta.color }} />
                             <div className="kg-topic-main">
                               <div className="kg-topic-title-row">
-                                {onStudy ? (
-                                  <button
-                                    type="button"
-                                    className="kg-topic-name kg-study"
-                                    onClick={() => onStudy(t.topic)}
-                                  >
-                                    {t.topic}
-                                  </button>
-                                ) : (
-                                  <span className="kg-topic-name">{t.topic}</span>
-                                )}
+                                <button
+                                  type="button"
+                                  className="kg-topic-name kg-study"
+                                  onClick={() => handleTopicClick(t, s)}
+                                  title={t.status === 'not_studied' ? 'Начать урок' : 'Открыть конспект'}
+                                >
+                                  {t.topic}
+                                </button>
                                 <span className="kg-topic-status">{meta.label}</span>
                               </div>
-                              {(attempts > 0 || weak.length > 0) && (
-                                <div className="kg-topic-meta">
-                                  {attempts > 0 && (
-                                    <span>
-                                      {correct}/{attempts} · {Math.round(accuracy * 100)}%
-                                    </span>
-                                  )}
-                                  {weak.length > 0 && (
-                                    <span className="kg-weak">
-                                      слабые: {weak.slice(0, 2).join(', ')}
-                                      {weak.length > 2 ? '…' : ''}
-                                    </span>
-                                  )}
+
+                              {/* Мини-прогресс мастерства */}
+                              {attempts > 0 && (
+                                <div className="kg-mastery-row">
+                                  <div className="kg-mastery-mini-track">
+                                    <div className={`kg-mastery-mini-fill ${cls}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="kg-mastery-pct">{pct}%</span>
+                                  <span className="kg-topic-attempts">{correct}/{attempts} · {Math.round(accuracy * 100)}%</span>
                                 </div>
                               )}
-                              <button
-                                type="button"
-                                className="kg-records-toggle"
-                                aria-expanded={open}
-                                onClick={() => toggleTopic(s, t.topic)}
-                              >
-                                {open ? '▾' : '▸'} Вопросы и ответы ({topicRecords.length})
-                              </button>
+
+                              {weak.length > 0 && (
+                                <div className="kg-topic-meta">
+                                  <span className="kg-weak">
+                                    слабые: {weak.slice(0, 2).join(', ')}
+                                    {weak.length > 2 ? '…' : ''}
+                                  </span>
+                                </div>
+                              )}
+
+                              {topicRecords.length > 0 && (
+                                <button
+                                  type="button"
+                                  className="kg-records-toggle"
+                                  aria-expanded={open}
+                                  onClick={() => toggleTopic(s, t.topic)}
+                                >
+                                  {open ? '▾' : '▸'} Вопросы ({topicRecords.length})
+                                </button>
+                              )}
                               {open && (
                                 <div className="kg-records">
-                                  {topicRecords.length === 0 ? (
-                                    <div className="kg-record-empty">По этой теме записей пока нет.</div>
-                                  ) : (
-                                    topicRecords.slice(0, MAX_RECORDS).map((r) => (
-                                      <div className="kg-record" key={r.record_id || r.question_id || `${r.ts}-${r.question}`}>
-                                        <div className="kg-record-q">{r.question || '—'}</div>
-                                        <div className={`kg-record-a ${r.correct ? 'correct' : 'wrong'}`}>
-                                          Ваш ответ: {r.student_answer || '—'} {r.correct ? '· верно' : '· неверно'}
-                                        </div>
-                                        {!r.correct && r.feedback ? (
-                                          <div className="kg-record-fb">{r.feedback}</div>
-                                        ) : null}
+                                  {topicRecords.slice(0, MAX_RECORDS).map((r) => (
+                                    <div className="kg-record" key={r.record_id || r.question_id || `${r.ts}-${r.question}`}>
+                                      <div className="kg-record-q">{r.question || '—'}</div>
+                                      <div className={`kg-record-a ${r.correct ? 'correct' : 'wrong'}`}>
+                                        Ваш ответ: {r.student_answer || '—'} {r.correct ? '· верно' : '· неверно'}
                                       </div>
-                                    ))
-                                  )}
+                                      {!r.correct && r.feedback ? (
+                                        <div className="kg-record-fb">{r.feedback}</div>
+                                      ) : null}
+                                    </div>
+                                  ))}
                                 </div>
                               )}
                             </div>
@@ -331,8 +465,30 @@ export default function StudentKGPanel({
               ))}
             </div>
           )}
+
+          {/* Экспорт (перенесено из КонспектWikiPanel) */}
+          <div className="kg-export">
+            <button type="button" className="btn small" disabled={!studentId} onClick={exportCsv}>⬇ Журнал (CSV)</button>
+            <button type="button" className="btn small" disabled={!studentId} onClick={exportOkf}>OKF</button>
+          </div>
+          {exportNote ? <div className="kg-export-note">{exportNote}</div> : null}
         </>
       )}
+
+      {/* Модал конспекта */}
+      {article ? (
+        <TopicArticle
+          article={article}
+          onClose={() => setArticle(null)}
+          onEnrich={doEnrich}
+          enriching={enriching}
+          enrichNote={enrichNote}
+          siblings={siblings}
+          topicIndex={curIndex}
+          onNavigate={(a) => openArticle(a, a.subject)}
+          onRestudy={handleRestudy}
+        />
+      ) : null}
     </section>
   )
 }

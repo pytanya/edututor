@@ -1237,6 +1237,69 @@ a { color: var(--green-strong); }
   color: var(--muted);
 }
 
+/* Мини-прогресс мастерства в карточке темы */
+.kg-mastery-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.kg-mastery-mini-track {
+  flex: 1;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 80px;
+}
+
+.kg-mastery-mini-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.kg-mastery-mini-fill.low { background: var(--err); }
+.kg-mastery-mini-fill.mid { background: #fbbf24; }
+.kg-mastery-mini-fill.high { background: var(--green-strong); }
+
+.kg-mastery-pct {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  min-width: 28px;
+}
+
+.kg-topic-attempts {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.kg-head-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Экспорт (перенесён из КонспектWikiPanel) */
+.kg-export {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.kg-export-note {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 /* ---------- KnowledgeGraphPanel («Созвездие») ---------- */
 
 .kgp-panel {
@@ -2168,13 +2231,15 @@ a { color: var(--green-strong); }
 }
 
 .topic-enrich-note {
-  padding: 8px 12px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--green-strong);
-  background: var(--green-soft);
-  border: 1px solid rgba(47, 107, 79, 0.3);
-  border-radius: 9px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  border-radius: 8px;
+  background: rgba(255, 170, 0, 0.12);
+  border: 1px solid rgba(255, 170, 0, 0.25);
+  color: #ffd080;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  animation: notesFadeIn 0.3s ease;
 }
 
 .note-card {
@@ -2564,3 +2629,74 @@ a { color: var(--green-strong); }
   font-size: inherit;
 }
 
+/* === NoteItem: типизированные заметки === */
+@keyframes notesFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.note-item {
+  border-left: 3px solid var(--glass-border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: rgba(255,255,255,0.03);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.note-item--error { border-left-color: var(--red, #f44); }
+.note-item--clarification { border-left-color: var(--amber, #fa0); }
+.note-item--info { border-left-color: var(--green, #4f4); }
+
+.note-item__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+  text-align: left;
+}
+.note-item__header:hover { background: rgba(255,255,255,0.04); }
+
+.note-item__icon { flex-shrink: 0; font-size: 0.85rem; }
+.note-item__feedback {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-item__date {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  opacity: 0.5;
+}
+.note-item__arrow {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+  opacity: 0.5;
+}
+.note-item__arrow.open { transform: rotate(180deg); }
+
+.note-item__body {
+  padding: 6px 12px 10px 28px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.note-item__row { margin-bottom: 4px; }
+.note-item__label {
+  font-weight: 600;
+  margin-right: 6px;
+  opacity: 0.7;
+}
+
+.topic-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

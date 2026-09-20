@@ -1,6 +1,10 @@
 // TopicArticle — ридер конспекта: текст урока, статистика, слабые места,
-// концепции, навигация по темам предмета. Кнопка «Обогатить» + статус внутри.
+// концепции, навигация по темам предмета. Рендерится через Portal в body
+// для корректного отображения поверх всего UI.
+import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import Latex from './Latex'
+import NoteItem from './NoteItem'
 import { masteryClass } from './MasteryWall'
 
 export function isStubBody(body) {
@@ -8,7 +12,7 @@ export function isStubBody(body) {
   return !b || b.includes('накапливается по мере прохождения квизов')
 }
 
-export default function TopicArticle({ article, onClose = null, onEnrich = null, enriching = false, enrichNote = '', siblings = [], topicIndex = -1, onNavigate = null }) {
+export default function TopicArticle({ article, onClose = null, onEnrich = null, enriching = false, enrichNote = '', siblings = [], topicIndex = -1, onNavigate = null, onRestudy = null }) {
   if (!article) return null
   const mastery = typeof article.mastery === 'number' ? article.mastery : 0
   const accuracy = typeof article.accuracy === 'number' ? article.accuracy : 0
@@ -16,6 +20,7 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
   const body = article.body || ''
   const concepts = Array.isArray(article.concepts) ? article.concepts : []
   const weakAreas = Array.isArray(article.weak_areas) ? article.weak_areas : []
+  const notes = Array.isArray(article.notes) ? article.notes : []
   const stub = isStubBody(body)
   const pct = Math.round(mastery * 100)
   const cls = masteryClass(mastery)
@@ -23,8 +28,25 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
   const prevArt = topicIndex > 0 ? siblings[topicIndex - 1] : null
   const nextArt = topicIndex >= 0 && topicIndex < siblings.length - 1 ? siblings[topicIndex + 1] : null
 
-  return (
-    <div className="topic-overlay" role="dialog" aria-modal="true" aria-label={article.title}>
+  // Закрытие по Escape
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape' && onClose) onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  // Блокировка прокрутки body при открытом модале
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  const handleBackdropClick = (e) => {
+    if (e.target === e.currentTarget && onClose) onClose()
+  }
+
+  const modal = (
+    <div className="topic-overlay" role="dialog" aria-modal="true" aria-label={article.title} onClick={handleBackdropClick}>
       <div className="topic-article panel">
         <div className="topic-head">
           <div className="topic-heading">
@@ -37,6 +59,11 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
             </div>
           </div>
           <div className="topic-actions">
+            {onRestudy ? (
+              <button type="button" className="btn small" onClick={() => onRestudy(article.topic)}>
+                Учить заново →
+              </button>
+            ) : null}
             {onEnrich ? (
               <button type="button" className="btn small" disabled={enriching} onClick={onEnrich}>
                 {enriching ? 'Обогащаем…' : 'Обогатить конспект'}
@@ -78,6 +105,15 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
           <div className="topic-weak">Слабые места: {weakAreas.join(', ')}</div>
         ) : null}
 
+        {notes.length > 0 ? (
+          <div className="topic-block">
+            <h3 className="topic-block-title">Заметки ({notes.length})</h3>
+            <div className="topic-notes">
+              {notes.map((n, i) => <NoteItem key={`note-${i}`} note={n} />)}
+            </div>
+          </div>
+        ) : null}
+
         {concepts.length > 0 ? (
           <div className="topic-block">
             <h3 className="topic-block-title">Концепции</h3>
@@ -100,4 +136,6 @@ export default function TopicArticle({ article, onClose = null, onEnrich = null,
       </div>
     </div>
   )
+
+  return createPortal(modal, document.body)
 }

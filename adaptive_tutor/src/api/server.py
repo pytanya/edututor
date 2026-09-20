@@ -570,16 +570,15 @@ async def _schedule_enrich(
     art: Any,
     wiki: KnowledgeWiki,
 ) -> None:
-    """Ленивое обогащение тела: fire-and-forget, только при провижиненных
-    материалах темы и наличии RAG. Ошибки глотаются."""
+    """Ленивое обогащение тела: fire-and-forget при наличии RAG. Ошибки глотаются."""
     if not settings.wiki_enrich_enabled or not body.topic:
         return
     if not wiki_enrich.is_stub_body(art.body):
         return
     rag = app.state.rag_engine
-    key = "|".join((body.subject.strip(), body.grade.strip(), body.topic.strip()))
-    if rag is None or key not in app.state.provisioned:
+    if rag is None:
         return
+    key = "|".join((body.subject.strip(), body.grade.strip(), body.topic.strip()))
     if key in app.state.wiki_enriching:
         return
     app.state.wiki_enriching.add(key)
@@ -603,6 +602,62 @@ async def _schedule_enrich(
             pass
         finally:
             app.state.wiki_enriching.discard(key)
+
+    task = asyncio.create_task(_run())
+    tasks: set = app.state._enrich_tasks
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
+async def _schedule_enrich_kg_topics(
+    app: FastAPI,
+    student_id: str,
+    subject: str,
+    grade: str,
+    wiki: KnowledgeWiki,
+) -> None:
+    """Lazy-enrich всех тем ученика с заглушкой в теле (как graph.py в референсе).
+
+    Fire-and-forget: после ответа пробегаем все статьи ученика по предмету
+    и обогащаем те, у которых тело — заглушка и есть RAG-контекст.
+    """
+    if not settings.wiki_enrich_enabled:
+        return
+    rag = app.state.rag_engine
+    if rag is None:
+        return
+    articles = wiki.list_articles(subject)
+    stubs = [a for a in articles if wiki_enrich.is_stub_body(a.body)]
+    if not stubs:
+        return
+
+    async def _run() -> None:
+        try:
+            llm = app.state.runtime_factory().llm
+            models = LLMClientFactory.get_models_for_region(settings.region)
+            model = models.get("fast", "fast")
+            for art in stubs:
+                key = "|".join((subject.strip(), grade.strip(), art.topic.strip()))
+                if key in app.state.wiki_enriching:
+                    continue
+                app.state.wiki_enriching.add(key)
+                try:
+                    context = _rag_context(app, art.topic, subject, grade)
+                    if not context:
+                        continue
+                    res = await wiki_enrich.enrich_body(
+                        wiki, subject, art.topic, context, llm, model=model,
+                    )
+                    if res is not None:
+                        _log_wiki(
+                            app, "wiki.updated", student_id=student_id,
+                            subject=subject, topic=art.topic,
+                            mastery=res.get("mastery"),
+                        )
+                finally:
+                    app.state.wiki_enriching.discard(key)
+        except Exception:  # noqa: BLE001
+            pass
 
     task = asyncio.create_task(_run())
     tasks: set = app.state._enrich_tasks
@@ -1353,6 +1408,9 @@ async def _run_review(
                             notes=len(art.notes),
                         )
                     await _schedule_enrich(app, student_id, body, art, wiki)
+                    await _schedule_enrich_kg_topics(
+                        app, student_id, record.subject or "", "", wiki,
+                    )
             except Exception as exc:  # noqa: BLE001
                 print(f"[wiki] не удалось применить ответ: {exc}")
         # Журнал ответов (E4): review-ответ логируется как 'review:<card_id>'.
@@ -1936,6 +1994,11 @@ async def _run_chat(
                             notes=len(art.notes),
                         )
                     await _schedule_enrich(app, student_id, body, art, wiki)
+                    await _schedule_enrich_kg_topics(
+                        app, student_id,
+                        body.subject or session.subject or "",
+                        body.grade, wiki,
+                    )
             except Exception as exc:  # noqa: BLE001
                 print(f"[wiki] не удалось применить ответ: {exc}")
 
@@ -2414,7 +2477,13 @@ def create_app(
                 "note": "Нет материалов по теме в базе знаний — пройдите квиз или "
                 "добавьте источник, затем повторите.",
             }
-        llm = app.state.runtime_factory().llm
+        try:
+            llm = app.state.runtime_factory().llm
+        except Exception:
+            return {
+                "article": art.to_dict() if art else None,
+                "note": "LLM-провайдер не настроен — проверьте .env и ключи API.",
+            }
         models = LLMClientFactory.get_models_for_region(settings.region)
         res = await wiki_enrich.enrich_body(
             wiki, body.subject, body.topic, context, llm,

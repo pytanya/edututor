@@ -6,7 +6,6 @@ import {
 } from './identity'
 import Chat, { feedReducer } from './components/Chat'
 import AdaptivePanel from './components/AdaptivePanel'
-import KnowledgeWikiPanel from './components/KnowledgeWikiPanel'
 import StudentKGPanel from './components/StudentKGPanel'
 import KnowledgeGraphPanel from './components/KnowledgeGraphPanel'
 import TopicForm from './components/TopicForm'
@@ -359,26 +358,14 @@ export default function App() {
         >
           <AdaptivePanel adaptive={feed.adaptive} onStudy={studyNext} onReview={startReview} busy={busy} />
         </CollapsiblePanel>
-        <CollapsiblePanel
-          title="Конспекты"
-          defaultOpen={true}
-          badge={null}
-          hideInnerHeader={true}
-        >
-          <KnowledgeWikiPanel
-            studentId={studentId}
-            refreshKey={wikiVersion}
-            subject={current?.subject || ''}
-            grade={current?.grade || ''}
-          />
-        </CollapsiblePanel>
         <CollapsiblePanel title="Мои знания" defaultOpen={true}>
           <StudentKGPanel
             studentId={studentId}
             subject={current?.subject || ''}
+            grade={current?.grade || ''}
             onStartReview={startReview}
             busy={busy}
-            reloadKey={kgReloadKey}
+            reloadKey={kgReloadKey + wikiVersion}
             onStudy={studyNext}
           />
         </CollapsiblePanel>
